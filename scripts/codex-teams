@@ -17,6 +17,8 @@ TEAM_CONFIG_ARG=""
 codex_teams_usage() {
   cat <<'USAGE'
 Usage:
+  codex-teams [--repo <path>] [--state-dir <path>] [--config <path>]
+  codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] dashboard [--trigger <label>] [--max-start <n>]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] status [--json|--tui] [--trigger <label>] [--max-start <n>]
 
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task init [--gitignore <ask|yes|no>]
@@ -96,7 +98,7 @@ while [[ $# -gt 0 ]]; do
       codex_teams_usage
       exit 0
       ;;
-    status|task|worktree|run|emergency-stop)
+    status|dashboard|task|worktree|run|emergency-stop)
       break
       ;;
     *)
@@ -111,10 +113,11 @@ shift || true
 
 case "$domain" in
   status) cmd_unified_status "$@" ;;
+  dashboard) cmd_unified_status --tui "$@" ;;
   task) dispatch_task "$@" ;;
   worktree) dispatch_worktree "$@" ;;
   run) dispatch_run "$@" ;;
   emergency-stop) cmd_task_emergency_stop "$@" ;;
-  "") codex_teams_usage ;;
+  "") cmd_unified_status --tui "$@" ;;
   *) die "Unknown domain: $domain" ;;
 esac

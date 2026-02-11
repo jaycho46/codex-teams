@@ -19,12 +19,18 @@ cat > "$REPO/TODO.md" <<'EOF'
 | T9-001 | Ready task | AgentA | - | | TODO |
 EOF
 
-OUTPUT="$($CLI --repo "$REPO" status --tui)"
+assert_status_like_output() {
+  local output="$1"
 
-echo "$OUTPUT"
+  echo "$output"
 
-echo "$OUTPUT" | grep -q "Scheduler: ready=1 excluded=0"
-echo "$OUTPUT" | grep -q "Runtime: total=0 active=0 stale=0"
-echo "$OUTPUT" | grep -q "Coordination: locks=0"
+  echo "$output" | grep -q "Scheduler: ready=1 excluded=0"
+  echo "$output" | grep -q "Runtime: total=0 active=0 stale=0"
+  echo "$output" | grep -q "Coordination: locks=0"
+}
 
-echo "tui fallback smoke test passed"
+assert_status_like_output "$($CLI --repo "$REPO" status --tui)"
+assert_status_like_output "$($CLI --repo "$REPO" dashboard)"
+assert_status_like_output "$($CLI --repo "$REPO")"
+
+echo "tui/dashboard default entry smoke test passed"

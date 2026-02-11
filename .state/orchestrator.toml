@@ -1,0 +1,27 @@
+[repo]
+base_branch = "main"
+todo_file = "TODO.md"
+state_dir = ".state"
+worktree_parent = "../codex-teams-cli-worktrees"
+
+[owners]
+AgentA = "app-shell"
+AgentB = "domain-core"
+AgentC = "provider-openai"
+AgentD = "ui-popover"
+AgentE = "ci-release"
+
+[runtime]
+max_start = 0
+launch_backend = "auto"
+auto_no_launch = false
+codex_flags = "--full-auto -m gpt-5.3-codex -c model_reasoning_effort=\"medium\""
+
+[todo]
+id_col = 2
+title_col = 3
+owner_col = 4
+deps_col = 5
+status_col = 7
+gate_regex = "`(G[0-9]+ \\\\([^)]+\\\\))`"
+done_keywords = ["DONE", "완료", "Complete", "complete"]

@@ -673,8 +673,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             ("escape", "quit", "Quit"),
             ("1", "show_tasks", "Task"),
             ("2", "show_logs", "Log"),
-            ("r", "run_start", "Start-Task"),
-            ("e", "emergency_stop", "Emergency-Stop"),
+            ("ctrl+r", "run_start", "Start"),
+            ("ctrl+e", "emergency_stop", "Stop-All"),
         ]
 
         def __init__(self) -> None:
