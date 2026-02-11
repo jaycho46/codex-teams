@@ -43,11 +43,18 @@ scripts/codex-teams task emergency-stop [--reason <text>] [--apply]
 - `--gitignore yes`: append state path automatically when missing.
 - `--gitignore no`: skip updates.
 
-`task complete` commit subject format:
-- with `--summary`: `task(<id>): <summary>`
-- without `--summary`: `task(<id>): <task title from TODO.md>`
+`task complete` behavior:
+- does not create commits
+- requires task worktree to be fully committed and task status already `DONE`
+- use it as the final step to merge task branch and clean up worktree/branch
 - merge strategy default: `rebase-then-ff` (auto-rebase task branch onto `main` when ff-only merge fails)
 - use `--merge-strategy ff-only` to keep strict fast-forward behavior
+
+Commit message rules (task worktree):
+- Use `<type>: <summary> (<task_id>)` for deliverable commits.
+- Allowed `<type>`: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
+- Use `chore: mark <task_id> done` for the final DONE marker commit before `task complete`.
+- Avoid generic messages like `update`, `done`, `task complete`.
 
 ### Worktree domain
 

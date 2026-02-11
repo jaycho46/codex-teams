@@ -40,6 +40,13 @@ if [[ ! -d "$WT" ]]; then
   exit 1
 fi
 
+echo "done" > "$WT/agent-output.txt"
+git -C "$WT" add agent-output.txt
+git -C "$WT" commit -q -m "feat: complete T3-001"
+"$CLI" --repo "$WT" --state-dir "$REPO/.state" task update AgentA T3-001 DONE "done"
+git -C "$WT" add TODO.md
+git -C "$WT" commit -q -m "chore: mark T3-001 done"
+
 PID_META="$REPO/.state/orchestrator/t3-001.pid"
 cat > "$PID_META" <<'EOF'
 pid=999999

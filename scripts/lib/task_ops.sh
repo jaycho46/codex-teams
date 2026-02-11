@@ -387,45 +387,6 @@ cmd_task_update() {
   echo "Update logged: task=$task_id status=$status"
 }
 
-commit_completion_marker_if_needed() {
-  local task_id="${1:-}"
-  local summary="${2:-}"
-  local normalized_summary task_title
-  local commit_msg
-
-  normalized_summary="$(trim "$summary")"
-  if [[ -z "$normalized_summary" ]]; then
-    task_title="$(awk -F'|' -v task="$task_id" '
-      $0 ~ /^\|/ {
-        id=$2
-        gsub(/^[ \t]+|[ \t]+$/, "", id)
-        if (id == task) {
-          title=$3
-          gsub(/^[ \t]+|[ \t]+$/, "", title)
-          print title
-          exit
-        }
-      }
-    ' "$TODO_FILE")"
-    if [[ -n "$task_title" ]]; then
-      normalized_summary="$task_title"
-    else
-      normalized_summary="task complete"
-    fi
-  fi
-
-  commit_msg="task(${task_id}): ${normalized_summary}"
-
-  git -C "$REPO_ROOT" add -- "$TODO_FILE"
-  if git -C "$REPO_ROOT" diff --cached --quiet --exit-code; then
-    echo "No completion marker changes to commit."
-    return 0
-  fi
-
-  git -C "$REPO_ROOT" commit -q -m "$commit_msg"
-  echo "Committed completion marker on branch: $(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
-}
-
 merge_task_branch_into_primary() {
   local primary_repo="${1:-}"
   local branch_name="${2:-}"
@@ -586,14 +547,7 @@ cmd_task_complete() {
   [[ "$owner" == "$agent" ]] || die "Complete denied: scope=$scope owner=$owner requested_by=$agent"
   [[ "$lock_task" == "$task_id" ]] || die "Complete denied: scope=$scope lock_task=$lock_task requested_task=$task_id"
 
-  local todo_rel tracked_changes line changed_path
-  todo_rel="$TODO_FILE"
-  if [[ "$TODO_FILE" == "$REPO_ROOT/"* ]]; then
-    todo_rel="${TODO_FILE#"$REPO_ROOT/"}"
-  else
-    todo_rel="$(basename "$TODO_FILE")"
-  fi
-
+  local tracked_changes line changed_path task_status
   tracked_changes="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
   if [[ -n "$tracked_changes" ]]; then
     while IFS= read -r line; do
@@ -602,13 +556,30 @@ cmd_task_complete() {
       if [[ "$changed_path" == *" -> "* ]]; then
         changed_path="${changed_path##* -> }"
       fi
-      if [[ "$changed_path" != "$todo_rel" ]]; then
-        die "agent worktree has tracked uncommitted changes outside TODO file: $changed_path (commit first)"
-      fi
+      die "agent worktree has tracked uncommitted changes: $changed_path (commit everything before task complete)"
     done <<< "$tracked_changes"
   fi
 
-  update_todo_status "$task_id" "DONE"
+  task_status="$(awk -F'|' -v task="$task_id" '
+    $0 ~ /^\|/ {
+      id=$2
+      gsub(/^[ \t]+|[ \t]+$/, "", id)
+      if (id == task) {
+        status=$(NF-1)
+        gsub(/^[ \t]+|[ \t]+$/, "", status)
+        print status
+        exit
+      }
+    }
+  ' "$TODO_FILE")"
+  [[ -n "$task_status" ]] || die "Task not found in TODO board: $task_id"
+  case "$task_status" in
+    DONE|완료|Complete|complete) ;;
+    *)
+      die "Task status must be DONE before task complete: task=$task_id status=$task_status (commit everything first)"
+      ;;
+  esac
+
   local log_summary
   log_summary="$(trim "$summary")"
   if [[ -z "$log_summary" ]]; then
@@ -616,14 +587,31 @@ cmd_task_complete() {
   fi
 
   append_update_log "$agent" "$task_id" "DONE" "$log_summary"
-  echo "Marked task DONE in worktree: task=$task_id owner=$agent"
+  echo "Completion prerequisites satisfied: task=$task_id owner=$agent status=$task_status"
 
-  commit_completion_marker_if_needed "$task_id" "$summary"
-
-  local branch_name primary_repo
+  local branch_name primary_repo scheduler_bin primary_team_bin repo_root_phys team_bin_phys team_bin_dir
   branch_name="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
   primary_repo="$(primary_repo_root_for "$REPO_ROOT" || true)"
   [[ -n "$primary_repo" ]] || die "Unable to resolve primary repo from worktree: $REPO_ROOT"
+  primary_team_bin="$primary_repo/scripts/codex-teams"
+  repo_root_phys="$(cd "$REPO_ROOT" && pwd -P)"
+  team_bin_phys=""
+  if [[ -x "$TEAM_BIN" ]]; then
+    team_bin_dir="$(cd "$(dirname "$TEAM_BIN")" && pwd -P 2>/dev/null || true)"
+    if [[ -n "$team_bin_dir" ]]; then
+      team_bin_phys="$team_bin_dir/$(basename "$TEAM_BIN")"
+    fi
+  fi
+
+  if [[ -x "$primary_team_bin" ]]; then
+    scheduler_bin="$primary_team_bin"
+  elif [[ -n "$team_bin_phys" && "$team_bin_phys" != "$repo_root_phys/"* ]]; then
+    scheduler_bin="$TEAM_BIN"
+  elif command -v codex-teams >/dev/null 2>&1; then
+    scheduler_bin="$(command -v codex-teams)"
+  else
+    die "Unable to resolve codex-teams binary for post-complete scheduler run."
+  fi
 
   merge_task_branch_into_primary "$primary_repo" "$branch_name" "$BASE_BRANCH" "$REPO_ROOT" "$merge_strategy"
 
@@ -634,14 +622,17 @@ cmd_task_complete() {
   remove_pid_metadata_for_task "$task_id"
 
   if [[ "$auto_run_start" -eq 1 ]]; then
-    local -a run_cmd=("$TEAM_BIN" --repo "$primary_repo" --state-dir "$STATE_DIR")
+    local -a run_cmd=("$scheduler_bin" --repo "$primary_repo" --state-dir "$STATE_DIR")
     if [[ -n "${TEAM_CONFIG_ARG:-}" ]]; then
       run_cmd+=(--config "$TEAM_CONFIG_ARG")
     fi
     run_cmd+=(run start --trigger "$trigger_label")
 
     echo "Triggering scheduler after completion: trigger=$trigger_label"
-    "${run_cmd[@]}"
+    (
+      cd "$primary_repo"
+      "${run_cmd[@]}"
+    )
   fi
 
   echo "Task completion flow finished: task=$task_id owner=$agent scope=$scope"
@@ -1338,6 +1329,23 @@ build_codex_worker_prompt() {
   local agent="${5:-}"
   local trigger="${6:-manual}"
   local worktree_path="${7:-}"
+  local rules_file rendered_rules
+
+  if [[ -n "${SCRIPT_DIR:-}" ]]; then
+    rules_file="$SCRIPT_DIR/prompts/codex-worker-rules.md"
+  else
+    local lib_dir
+    lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    rules_file="$(cd "$lib_dir/.." && pwd)/prompts/codex-worker-rules.md"
+  fi
+  [[ -f "$rules_file" ]] || die "Missing codex worker rules file: $rules_file"
+
+  rendered_rules="$(cat "$rules_file")"
+  rendered_rules="${rendered_rules//__WORKTREE_PATH__/$worktree_path}"
+  rendered_rules="${rendered_rules//__STATE_DIR__/$STATE_DIR}"
+  rendered_rules="${rendered_rules//__AGENT__/$agent}"
+  rendered_rules="${rendered_rules//__TASK_ID__/$task_id}"
+  rendered_rules="${rendered_rules//__SCOPE__/$scope}"
 
   cat <<PROMPT
 Task assignment: ${task_id} (${task_title})
@@ -1348,23 +1356,7 @@ Trigger: ${trigger}
 Work only on this task in this worktree:
 ${worktree_path}
 
-Required guardrail skill:
-- Use \$codex-teams.
-- If the skill is unavailable, follow the fallback rules below exactly.
-
-Execution rules:
-- Lifecycle contract: tasks start via run start and end via task complete.
-- Do not self-start work using task lock/task update/worktree start.
-- Do not mark DONE unless task deliverable files were actually created or changed.
-- Do not finish with generic summaries such as "task complete" or "done".
-- Keep work scoped to the assigned task title and owner scope.
-- Do not manually edit lock/pid metadata files.
-- Report progress with a specific summary:
-  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task update "${agent}" "${task_id}" IN_PROGRESS "progress update"
-- When complete, finish with a meaningful summary (or omit --summary to fallback to task title):
-  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task complete "${agent}" "${scope}" "${task_id}" --summary "what was delivered"
-- If task completion fails due to merge/rebase conflicts, stop and report BLOCKED:
-  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task update "${agent}" "${task_id}" BLOCKED "merge conflict: <reason>"
+${rendered_rules}
 PROMPT
 }
 

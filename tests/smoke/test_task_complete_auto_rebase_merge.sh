@@ -40,6 +40,14 @@ if [[ ! -d "$WT" ]]; then
   exit 1
 fi
 
+# Simulate implementation and DONE status commits before completion.
+echo "task deliverable" > "$WT/task-output.txt"
+git -C "$WT" add task-output.txt
+git -C "$WT" commit -q -m "feat: deliver T6-001"
+"$CLI" --repo "$WT" --state-dir "$REPO/.state" task update AgentA T6-001 DONE "auto rebase merge"
+git -C "$WT" add TODO.md
+git -C "$WT" commit -q -m "chore: mark T6-001 done"
+
 # Advance main after task worktree starts to force non-ff merge condition.
 echo "main advanced" > "$REPO/main-advance.txt"
 git -C "$REPO" add main-advance.txt
@@ -54,7 +62,11 @@ test -f "$REPO/main-advance.txt"
 grep -q "| T6-001 | Rebase merge task | AgentA | - | auto rebase merge | DONE |" "$REPO/TODO.md"
 
 LAST_SUBJECT="$(git -C "$REPO" log -1 --pretty=%s)"
-echo "$LAST_SUBJECT" | grep -q "task(T6-001): auto rebase merge"
+echo "$LAST_SUBJECT" | grep -q "chore: mark T6-001 done"
+if git -C "$REPO" log --pretty=%s | grep -q '^task(T6-001):'; then
+  echo "task complete should not create auto-commit subject: task(T6-001): ..."
+  exit 1
+fi
 
 if [[ -d "$WT" ]]; then
   echo "completed worktree should be removed: $WT"

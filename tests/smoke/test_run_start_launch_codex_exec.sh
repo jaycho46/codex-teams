@@ -107,6 +107,14 @@ fi
 grep -F -- '$codex-teams' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Do not mark DONE unless task deliverable files were actually added or updated.' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Task lifecycle contract: this task was started by run start, and must end via task complete.' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Commit message rules:' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Deliverable commits: <type>: <summary> (T8-001) where <type> is one of feat|fix|refactor|docs|test|chore' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Final DONE marker commit: chore: mark T8-001 done' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Commit everything before task complete:' "$FAKE_ARGS" >/dev/null
+grep -F -- 'git add -A && git commit -m "chore: mark T8-001 done"' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Use task complete as the final command to perform merge and worktree cleanup.' "$FAKE_ARGS" >/dev/null
+grep -F -- 'If task complete hits merge/rebase conflicts, resolve them as much as possible and rerun task complete.' "$FAKE_ARGS" >/dev/null
+grep -F -- 'Only if it still fails after resolution attempts, report BLOCKED:' "$FAKE_ARGS" >/dev/null
 
 PATH="$FAKE_BIN:$PATH" \
   "$CLI" --repo "$REPO" task stop --all --apply --reason "smoke launch cleanup"
