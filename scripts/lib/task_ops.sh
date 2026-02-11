@@ -1349,20 +1349,22 @@ Work only on this task in this worktree:
 ${worktree_path}
 
 Required guardrail skill:
-- Use \$codex-teams-task-guardrails.
+- Use \$codex-teams.
 - If the skill is unavailable, follow the fallback rules below exactly.
 
 Execution rules:
-- Task lifecycle contract: this task was started by run start, and must end via task complete.
-- Do not attempt to "start" this task manually with task lock/update/worktree start.
-- Keep changes scoped to the task.
-- Do not mark DONE unless task deliverable files were actually added or updated.
-- Never use generic completion summaries like "task complete" or "done".
-- If task completion merge fails, stop and report BLOCKED with the merge reason.
-- Report progress when meaningful:
+- Lifecycle contract: tasks start via run start and end via task complete.
+- Do not self-start work using task lock/task update/worktree start.
+- Do not mark DONE unless task deliverable files were actually created or changed.
+- Do not finish with generic summaries such as "task complete" or "done".
+- Keep work scoped to the assigned task title and owner scope.
+- Do not manually edit lock/pid metadata files.
+- Report progress with a specific summary:
   scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task update "${agent}" "${task_id}" IN_PROGRESS "progress update"
-- When complete, finish with:
-  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task complete "${agent}" "${scope}" "${task_id}"
+- When complete, finish with a meaningful summary (or omit --summary to fallback to task title):
+  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task complete "${agent}" "${scope}" "${task_id}" --summary "what was delivered"
+- If task completion fails due to merge/rebase conflicts, stop and report BLOCKED:
+  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task update "${agent}" "${task_id}" BLOCKED "merge conflict: <reason>"
 PROMPT
 }
 

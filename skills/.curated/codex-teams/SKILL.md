@@ -1,9 +1,9 @@
 ---
-name: codex-teams-task-guardrails
+name: codex-teams
 description: Guardrails for codex-teams worker execution. Use when completing TODO tasks in codex/* worktrees so workers do real file delivery, avoid generic completion commits, and handle merge failures safely.
 ---
 
-# Codex Teams Task Guardrails
+# Codex Teams Guardrails
 
 Apply this skill for tasks executed by `codex-teams run start` workers.
 
@@ -12,7 +12,7 @@ Apply this skill for tasks executed by `codex-teams run start` workers.
 1. Lifecycle contract: tasks start via `codex-teams run start` and end via `codex-teams task complete`.
 2. Do not self-start work using `task lock`, `task update`, or `worktree start` as a substitute for scheduler start.
 3. Do not mark a task `DONE` unless task deliverable files were actually created or changed.
-4. Do not finish with generic summaries such as `task complete`, `done`, or `완료`.
+4. Do not finish with generic summaries such as `task complete` or `done`.
 5. Keep work scoped to the assigned task title and owner scope.
 6. Do not manually edit lock/pid metadata files.
 7. If completion fails due to merge/rebase conflicts, stop and report `BLOCKED` with a concrete reason.

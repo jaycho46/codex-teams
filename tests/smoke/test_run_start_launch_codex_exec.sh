@@ -104,7 +104,7 @@ if grep -Fx -- "--full-auto" "$FAKE_ARGS" >/dev/null; then
   echo "unexpected --full-auto in launched command"
   exit 1
 fi
-grep -F -- '$codex-teams-task-guardrails' "$FAKE_ARGS" >/dev/null
+grep -F -- '$codex-teams' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Do not mark DONE unless task deliverable files were actually added or updated.' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Task lifecycle contract: this task was started by run start, and must end via task complete.' "$FAKE_ARGS" >/dev/null
 

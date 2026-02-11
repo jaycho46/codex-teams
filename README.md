@@ -69,21 +69,21 @@ If task start/launch fails (for example lock conflicts), scheduler rollback will
 Launch workers are started as detached session processes so they survive scheduler command exit.
 Launch command includes `--add-dir` for state dir and primary repo so worker-side `task update/complete` can write orchestration metadata and finalize.
 If sandbox mode is not explicitly set in `runtime.codex_flags`, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox` so git completion flow can write `index.lock` under primary `.git/worktrees`.
-Worker prompt requests `$codex-teams-task-guardrails` to enforce execution quality gates.
+Worker prompt requests `$codex-teams` to enforce execution quality gates.
 The guardrail contract enforces lifecycle: start by `run start`, finish by `task complete`.
 
 ### Worker skill install
 
 This repo includes an installable skill:
 
-- `skills/codex-teams-task-guardrails`
+- `skills/.curated/codex-teams`
 
 Install with Codex skill installer (after pushing repo to GitHub):
 
 ```bash
 python3 /Users/jaycho/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
   --repo <owner>/codex-teams-cli \
-  --path skills/codex-teams-task-guardrails
+  --path skills/.curated/codex-teams
 ```
 
 After install: restart Codex.
