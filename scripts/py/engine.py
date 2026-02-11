@@ -6,6 +6,7 @@ import json
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -460,7 +461,7 @@ def _render_status_text(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _run_status_tui(payload: dict[str, Any]) -> None:
+def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -> None:
     try:
         from textual.app import App, ComposeResult
         from textual.containers import VerticalScroll
@@ -468,10 +469,7 @@ def _run_status_tui(payload: dict[str, Any]) -> None:
     except ModuleNotFoundError:
         die("Textual is not installed. Install with: pip install textual")
 
-    scheduler = payload.get("scheduler", {})
-    runtime = payload.get("runtime", {})
-    coordination = payload.get("coordination", {})
-    task_board = payload.get("task_board", {})
+    refresh_seconds = 2.0
 
     class StatusTui(App[None]):
         CSS = """
@@ -502,6 +500,12 @@ def _run_status_tui(payload: dict[str, Any]) -> None:
         """
         BINDINGS = [("q", "quit", "Quit"), ("escape", "quit", "Quit"), ("t", "toggle_tasks", "Tasks")]
 
+        def __init__(self) -> None:
+            super().__init__()
+            self.current_payload: dict[str, Any] = initial_payload
+            self.last_error: str = ""
+            self.task_board_visible = False
+
         def compose(self) -> ComposeResult:
             yield Header(show_clock=True)
             yield Static(id="meta")
@@ -513,113 +517,158 @@ def _run_status_tui(payload: dict[str, Any]) -> None:
             yield DataTable(id="task_table")
             yield Footer()
 
+        @staticmethod
+        def _fill_table(table: DataTable, rows: list[tuple[str, ...]], fallback: tuple[str, ...]) -> None:
+            table.clear()
+            if rows:
+                for row in rows:
+                    table.add_row(*row)
+            else:
+                table.add_row(*fallback)
+
+        def _render_payload(self) -> None:
+            payload = self.current_payload
+            scheduler = payload.get("scheduler", {})
+            runtime = payload.get("runtime", {})
+            coordination = payload.get("coordination", {})
+            task_board = payload.get("task_board", {})
+
+            meta = self.query_one("#meta", Static)
+            refreshed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            meta_lines = [
+                f"repo={payload.get('repo_root', '')}",
+                f"state_dir={payload.get('state_dir', '')}",
+                (
+                    f"trigger={scheduler.get('trigger', 'manual')} "
+                    f"max_start={scheduler.get('max_start', 0)} "
+                    f"tasks={task_board.get('summary', {}).get('total', 0)}"
+                ),
+                f"last_refresh={refreshed_at}",
+            ]
+            if self.last_error:
+                meta_lines.append(f"last_error={self.last_error}")
+            meta.update("\n".join(meta_lines))
+
+            ready_table = self.query_one("#ready_table", DataTable)
+            ready_rows = [
+                (
+                    str(item.get("task_id", "")),
+                    str(item.get("owner", "")),
+                    str(item.get("scope", "")),
+                    str(item.get("deps", "")),
+                )
+                for item in scheduler.get("ready_tasks", [])
+            ]
+            self._fill_table(ready_table, ready_rows, ("-", "-", "-", "-"))
+
+            excluded_table = self.query_one("#excluded_table", DataTable)
+            excluded_rows = [
+                (
+                    str(item.get("task_id", "")),
+                    str(item.get("owner", "")),
+                    str(item.get("reason", "")),
+                    str(item.get("source", "")),
+                )
+                for item in scheduler.get("excluded_tasks", [])
+            ]
+            self._fill_table(excluded_table, excluded_rows, ("-", "-", "-", "-"))
+
+            runtime_table = self.query_one("#runtime_table", DataTable)
+            counts = runtime.get("summary", {}).get("state_counts", {})
+            runtime_rows = [(str(state), str(count)) for state, count in sorted(counts.items(), key=lambda x: x[0])]
+            self._fill_table(runtime_table, runtime_rows, ("NONE", "0"))
+
+            lock_table = self.query_one("#lock_table", DataTable)
+            lock_rows = [
+                (
+                    str(lock.get("scope", "")),
+                    str(lock.get("owner", "")),
+                    str(lock.get("task_id", "")),
+                )
+                for lock in coordination.get("active_locks", [])
+            ]
+            self._fill_table(lock_table, lock_rows, ("-", "-", "-"))
+
+            task_table = self.query_one("#task_table", DataTable)
+            task_rows = [
+                (
+                    str(item.get("task_id", "")),
+                    str(item.get("title", "")),
+                    str(item.get("owner", "")),
+                    str(item.get("scope", "")),
+                    str(item.get("status", "")),
+                    str(item.get("deps", "")),
+                )
+                for item in reversed(task_board.get("tasks", []))
+            ]
+            self._fill_table(task_table, task_rows, ("-", "-", "-", "-", "-", "-"))
+
+            task_state = "shown" if self.task_board_visible else "hidden"
+            subtitle = f"Press q to quit | Task board: {task_state} (toggle: t) | Auto-refresh: {refresh_seconds:.0f}s"
+            if self.last_error:
+                subtitle = f"{subtitle} | Last refresh failed"
+            self.sub_title = subtitle
+
+        def _refresh_payload(self) -> None:
+            try:
+                self.current_payload = _status_payload(args)
+                self.last_error = ""
+            except SystemExit as err:
+                self.last_error = str(err) or "status refresh failed"
+            except Exception as err:
+                self.last_error = str(err)
+            self._render_payload()
+
         def on_mount(self) -> None:
             self.title = "codex-teams status"
             self.sub_title = "Press q to quit | Task board: hidden (toggle: t)"
 
-            meta = self.query_one("#meta", Static)
-            meta.update(
-                (
-                    f"repo={payload.get('repo_root', '')}\n"
-                    f"state_dir={payload.get('state_dir', '')}\n"
-                    f"trigger={scheduler.get('trigger', 'manual')} "
-                    f"max_start={scheduler.get('max_start', 0)} "
-                    f"tasks={task_board.get('summary', {}).get('total', 0)}"
-                )
-            )
-
             ready_table = self.query_one("#ready_table", DataTable)
             ready_table.zebra_stripes = True
             ready_table.add_columns("READY task", "Owner", "Scope", "Deps")
-            ready_rows = scheduler.get("ready_tasks", [])
-            if ready_rows:
-                for item in ready_rows:
-                    ready_table.add_row(
-                        str(item.get("task_id", "")),
-                        str(item.get("owner", "")),
-                        str(item.get("scope", "")),
-                        str(item.get("deps", "")),
-                    )
-            else:
-                ready_table.add_row("-", "-", "-", "-")
 
             excluded_table = self.query_one("#excluded_table", DataTable)
             excluded_table.zebra_stripes = True
             excluded_table.add_columns("EXCLUDED task", "Owner", "Reason", "Source")
-            excluded_rows = scheduler.get("excluded_tasks", [])
-            if excluded_rows:
-                for item in excluded_rows:
-                    excluded_table.add_row(
-                        str(item.get("task_id", "")),
-                        str(item.get("owner", "")),
-                        str(item.get("reason", "")),
-                        str(item.get("source", "")),
-                    )
-            else:
-                excluded_table.add_row("-", "-", "-", "-")
 
             runtime_table = self.query_one("#runtime_table", DataTable)
             runtime_table.zebra_stripes = True
             runtime_table.add_columns("Runtime state", "Count")
-            counts = runtime.get("summary", {}).get("state_counts", {})
-            if counts:
-                for state, count in sorted(counts.items(), key=lambda x: x[0]):
-                    runtime_table.add_row(str(state), str(count))
-            else:
-                runtime_table.add_row("NONE", "0")
 
             lock_table = self.query_one("#lock_table", DataTable)
             lock_table.zebra_stripes = True
             lock_table.add_columns("Lock scope", "Owner", "Task")
-            locks = coordination.get("active_locks", [])
-            if locks:
-                for lock in locks:
-                    lock_table.add_row(
-                        str(lock.get("scope", "")),
-                        str(lock.get("owner", "")),
-                        str(lock.get("task_id", "")),
-                    )
-            else:
-                lock_table.add_row("-", "-", "-")
 
             task_table = self.query_one("#task_table", DataTable)
             task_table.zebra_stripes = True
             task_table.add_columns("Task", "Title", "Owner", "Scope", "Status", "Deps")
-            task_rows = task_board.get("tasks", [])
-            if task_rows:
-                for item in reversed(task_rows):
-                    task_table.add_row(
-                        str(item.get("task_id", "")),
-                        str(item.get("title", "")),
-                        str(item.get("owner", "")),
-                        str(item.get("scope", "")),
-                        str(item.get("status", "")),
-                        str(item.get("deps", "")),
-                    )
-            else:
-                task_table.add_row("-", "-", "-", "-", "-", "-")
             task_table.display = False
+
+            self._render_payload()
+            self.set_interval(refresh_seconds, self._refresh_payload)
 
         def action_toggle_tasks(self) -> None:
             task_table = self.query_one("#task_table", DataTable)
-            task_table.display = not task_table.display
-            state = "shown" if task_table.display else "hidden"
-            self.sub_title = f"Press q to quit | Task board: {state} (toggle: t)"
+            self.task_board_visible = not self.task_board_visible
+            task_table.display = self.task_board_visible
+            self._render_payload()
 
     StatusTui().run()
 
 
 def cmd_status(args: argparse.Namespace) -> None:
-    payload = _status_payload(args)
-    if args.format == "json":
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return
     if args.format == "tui":
         # In non-interactive shells (tests/CI), keep deterministic text output.
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            payload = _status_payload(args)
             print(_render_status_text(payload))
             return
-        _run_status_tui(payload)
+        _run_status_tui(args, _status_payload(args))
+        return
+
+    payload = _status_payload(args)
+    if args.format == "json":
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
 
     print(_render_status_text(payload))

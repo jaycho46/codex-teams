@@ -20,6 +20,7 @@ Includes scheduler readiness, excluded tasks (with reasons), runtime state count
 
 - `--tui`: launch interactive status dashboard via `textual` (TTY required).
 - TUI shows ready/excluded/runtime/locks by default; task board is fixed at the bottom, hidden initially, and toggled with `t`.
+- TUI auto-refreshes scheduler/runtime/task-board state every 2 seconds.
 - If `--tui` is used in non-interactive execution (tests/CI), it falls back to text output.
 - Install dependency for interactive mode: `python3 -m pip install textual`
 
