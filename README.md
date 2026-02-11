@@ -32,7 +32,7 @@ scripts/codex-teams task lock <agent> <scope> [task_id]
 scripts/codex-teams task unlock <agent> <scope>
 scripts/codex-teams task heartbeat <agent> <scope>
 scripts/codex-teams task update <agent> <task_id> <status> <summary>
-scripts/codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start]
+scripts/codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]
 scripts/codex-teams task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
 scripts/codex-teams task cleanup-stale [--apply]
 scripts/codex-teams task emergency-stop [--reason <text>] [--apply]
@@ -46,6 +46,8 @@ scripts/codex-teams task emergency-stop [--reason <text>] [--apply]
 `task complete` commit subject format:
 - with `--summary`: `task(<id>): <summary>`
 - without `--summary`: `task(<id>): <task title from TODO.md>`
+- merge strategy default: `rebase-then-ff` (auto-rebase task branch onto `main` when ff-only merge fails)
+- use `--merge-strategy ff-only` to keep strict fast-forward behavior
 
 ### Worktree domain
 
@@ -67,6 +69,24 @@ If task start/launch fails (for example lock conflicts), scheduler rollback will
 Launch workers are started as detached session processes so they survive scheduler command exit.
 Launch command includes `--add-dir` for state dir and primary repo so worker-side `task update/complete` can write orchestration metadata and finalize.
 If sandbox mode is not explicitly set in `runtime.codex_flags`, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox` so git completion flow can write `index.lock` under primary `.git/worktrees`.
+Worker prompt requests `$codex-teams-task-guardrails` to enforce execution quality gates.
+The guardrail contract enforces lifecycle: start by `run start`, finish by `task complete`.
+
+### Worker skill install
+
+This repo includes an installable skill:
+
+- `skills/codex-teams-task-guardrails`
+
+Install with Codex skill installer (after pushing repo to GitHub):
+
+```bash
+python3 /Users/jaycho/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo <owner>/codex-teams-cli \
+  --path skills/codex-teams-task-guardrails
+```
+
+After install: restart Codex.
 
 ## Ready task selection behavior
 
@@ -110,5 +130,6 @@ bash tests/smoke/test_task_init_gitignore.sh
 bash tests/smoke/test_task_complete_auto_run_start.sh
 bash tests/smoke/test_task_complete_clears_pid_metadata.sh
 bash tests/smoke/test_task_complete_commit_summary_fallback.sh
+bash tests/smoke/test_task_complete_auto_rebase_merge.sh
 bash tests/smoke/test_status_tui_fallback.sh
 ```

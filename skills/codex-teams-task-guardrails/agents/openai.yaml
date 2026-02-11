@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Teams Guardrails"
+  short_description: "Guardrails for codex-teams task workers"
+  default_prompt: "Use $codex-teams-task-guardrails to execute a codex-teams task safely."

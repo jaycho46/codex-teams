@@ -430,8 +430,16 @@ merge_task_branch_into_primary() {
   local primary_repo="${1:-}"
   local branch_name="${2:-}"
   local base_branch="${3:-main}"
+  local task_worktree="${4:-}"
+  local merge_strategy="${5:-rebase-then-ff}"
 
   [[ -n "$primary_repo" && -n "$branch_name" ]] || return 1
+  case "$merge_strategy" in
+    ff-only|rebase-then-ff) ;;
+    *)
+      die "Invalid merge strategy: $merge_strategy (expected: ff-only|rebase-then-ff)"
+      ;;
+  esac
 
   if [[ -n "$(git -C "$primary_repo" status --porcelain --untracked-files=no)" ]]; then
     die "primary repo has tracked uncommitted changes: $primary_repo"
@@ -453,10 +461,37 @@ merge_task_branch_into_primary() {
     return 0
   fi
 
-  if ! git -C "$primary_repo" merge --ff-only "$branch_name" >/dev/null 2>&1; then
+  if git -C "$primary_repo" merge --ff-only "$branch_name" >/dev/null 2>&1; then
+    echo "Merged branch into primary: $branch_name -> $base_branch"
+    return 0
+  fi
+
+  if [[ "$merge_strategy" == "ff-only" ]]; then
     die "Fast-forward merge failed: $branch_name -> $base_branch (manual merge required)"
   fi
-  echo "Merged branch into primary: $branch_name -> $base_branch"
+
+  [[ -n "$task_worktree" ]] || die "Fast-forward merge failed: $branch_name -> $base_branch (task worktree required for auto-rebase)"
+  if [[ ! -d "$task_worktree" ]]; then
+    die "Fast-forward merge failed: task worktree not found for auto-rebase: $task_worktree"
+  fi
+
+  if [[ -n "$(git -C "$task_worktree" status --porcelain --untracked-files=no)" ]]; then
+    die "Fast-forward merge failed and task worktree has tracked uncommitted changes: $task_worktree"
+  fi
+  if [[ "$(git -C "$task_worktree" rev-parse --abbrev-ref HEAD)" != "$branch_name" ]]; then
+    git -C "$task_worktree" checkout --quiet "$branch_name"
+  fi
+
+  echo "Fast-forward merge failed, attempting auto-rebase: $branch_name onto $base_branch"
+  if ! git -C "$task_worktree" rebase "$base_branch" >/dev/null 2>&1; then
+    git -C "$task_worktree" rebase --abort >/dev/null 2>&1 || true
+    die "Auto-rebase failed: $branch_name onto $base_branch (manual merge required)"
+  fi
+
+  if ! git -C "$primary_repo" merge --ff-only "$branch_name" >/dev/null 2>&1; then
+    die "Merge failed after auto-rebase: $branch_name -> $base_branch (manual merge required)"
+  fi
+  echo "Merged branch into primary after auto-rebase: $branch_name -> $base_branch"
 }
 
 remove_completed_worktree_and_branch() {
@@ -502,6 +537,7 @@ cmd_task_complete() {
   local summary=""
   local trigger_label="task_done"
   local auto_run_start=1
+  local merge_strategy="rebase-then-ff"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -518,6 +554,11 @@ cmd_task_complete() {
       --no-run-start)
         auto_run_start=0
         ;;
+      --merge-strategy)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --merge-strategy"
+        merge_strategy="$1"
+        ;;
       *)
         die "Unknown task complete option: $1"
         ;;
@@ -525,7 +566,13 @@ cmd_task_complete() {
     shift || true
   done
 
-  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start]"
+  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]"
+  case "$merge_strategy" in
+    ff-only|rebase-then-ff) ;;
+    *)
+      die "Invalid --merge-strategy: $merge_strategy (expected: ff-only|rebase-then-ff)"
+      ;;
+  esac
 
   require_agent_worktree_context
   initialize_task_state
@@ -578,7 +625,7 @@ cmd_task_complete() {
   primary_repo="$(primary_repo_root_for "$REPO_ROOT" || true)"
   [[ -n "$primary_repo" ]] || die "Unable to resolve primary repo from worktree: $REPO_ROOT"
 
-  merge_task_branch_into_primary "$primary_repo" "$branch_name" "$BASE_BRANCH"
+  merge_task_branch_into_primary "$primary_repo" "$branch_name" "$BASE_BRANCH" "$REPO_ROOT" "$merge_strategy"
 
   rm -f "$lock_file"
   echo "Unlocked: scope=$scope by=$agent"
@@ -1301,12 +1348,21 @@ Trigger: ${trigger}
 Work only on this task in this worktree:
 ${worktree_path}
 
+Required guardrail skill:
+- Use \$codex-teams-task-guardrails.
+- If the skill is unavailable, follow the fallback rules below exactly.
+
 Execution rules:
+- Task lifecycle contract: this task was started by run start, and must end via task complete.
+- Do not attempt to "start" this task manually with task lock/update/worktree start.
 - Keep changes scoped to the task.
+- Do not mark DONE unless task deliverable files were actually added or updated.
+- Never use generic completion summaries like "task complete" or "done".
+- If task completion merge fails, stop and report BLOCKED with the merge reason.
 - Report progress when meaningful:
   scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task update "${agent}" "${task_id}" IN_PROGRESS "progress update"
 - When complete, finish with:
-  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task complete "${agent}" "${scope}" "${task_id}" --summary "task complete"
+  scripts/codex-teams --repo "${worktree_path}" --state-dir "${STATE_DIR}" task complete "${agent}" "${scope}" "${task_id}"
 PROMPT
 }
 
