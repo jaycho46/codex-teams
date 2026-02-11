@@ -24,6 +24,7 @@ Usage:
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task unlock <agent> <scope>
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task heartbeat <agent> <scope>
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task update <agent> <task_id> <status> <summary>
+  codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task cleanup-stale [--apply]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task emergency-stop [--reason <text>] [--apply]
@@ -45,6 +46,7 @@ dispatch_task() {
     unlock) cmd_task_unlock "$@" ;;
     heartbeat) cmd_task_heartbeat "$@" ;;
     update) cmd_task_update "$@" ;;
+    complete) cmd_task_complete "$@" ;;
     stop) cmd_task_stop "$@" ;;
     cleanup-stale) cmd_task_cleanup_stale "$@" ;;
     emergency-stop) cmd_task_emergency_stop "$@" ;;

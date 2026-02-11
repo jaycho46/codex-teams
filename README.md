@@ -31,6 +31,7 @@ scripts/codex-teams task lock <agent> <scope> [task_id]
 scripts/codex-teams task unlock <agent> <scope>
 scripts/codex-teams task heartbeat <agent> <scope>
 scripts/codex-teams task update <agent> <task_id> <status> <summary>
+scripts/codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start]
 scripts/codex-teams task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
 scripts/codex-teams task cleanup-stale [--apply]
 scripts/codex-teams task emergency-stop [--reason <text>] [--apply]
@@ -85,5 +86,9 @@ Use `scripts/codex-teams status` and `scripts/codex-teams task ...` instead.
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'
 bash tests/smoke/test_run_start_dry_run.sh
+bash tests/smoke/test_run_start_lock_cleanup.sh
+bash tests/smoke/test_run_start_after_done.sh
+bash tests/smoke/test_run_start_scenario.sh
+bash tests/smoke/test_task_complete_auto_run_start.sh
 bash tests/smoke/test_status_tui_fallback.sh
 ```

@@ -265,6 +265,189 @@ cmd_task_update() {
   echo "Update logged: task=$task_id status=$status"
 }
 
+commit_completion_marker_if_needed() {
+  local task_id="${1:-}"
+  local summary="${2:-task complete}"
+  local commit_msg
+  commit_msg="task(${task_id}): complete - ${summary}"
+
+  git -C "$REPO_ROOT" add -- "$TODO_FILE"
+  if git -C "$REPO_ROOT" diff --cached --quiet --exit-code; then
+    echo "No completion marker changes to commit."
+    return 0
+  fi
+
+  git -C "$REPO_ROOT" commit -q -m "$commit_msg"
+  echo "Committed completion marker on branch: $(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+}
+
+merge_task_branch_into_primary() {
+  local primary_repo="${1:-}"
+  local branch_name="${2:-}"
+  local base_branch="${3:-main}"
+
+  [[ -n "$primary_repo" && -n "$branch_name" ]] || return 1
+
+  if [[ -n "$(git -C "$primary_repo" status --porcelain --untracked-files=no)" ]]; then
+    die "primary repo has tracked uncommitted changes: $primary_repo"
+  fi
+
+  if ! git -C "$primary_repo" rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+    die "Base branch not found in primary repo: $base_branch"
+  fi
+  if ! git -C "$primary_repo" rev-parse --verify "$branch_name" >/dev/null 2>&1; then
+    die "Task branch not found in primary repo: $branch_name"
+  fi
+
+  if [[ "$(git -C "$primary_repo" rev-parse --abbrev-ref HEAD)" != "$base_branch" ]]; then
+    git -C "$primary_repo" checkout --quiet "$base_branch"
+  fi
+
+  if git -C "$primary_repo" merge-base --is-ancestor "$branch_name" "$base_branch"; then
+    echo "Branch already merged: $branch_name -> $base_branch"
+    return 0
+  fi
+
+  if ! git -C "$primary_repo" merge --ff-only "$branch_name" >/dev/null 2>&1; then
+    die "Fast-forward merge failed: $branch_name -> $base_branch (manual merge required)"
+  fi
+  echo "Merged branch into primary: $branch_name -> $base_branch"
+}
+
+remove_completed_worktree_and_branch() {
+  local primary_repo="${1:-}"
+  local worktree_path="${2:-}"
+  local branch_name="${3:-}"
+
+  [[ -n "$primary_repo" && -n "$worktree_path" && -n "$branch_name" ]] || return 1
+
+  if [[ "$worktree_path" == "$primary_repo" ]]; then
+    die "Refusing cleanup: worktree path points to primary repo ($worktree_path)"
+  fi
+
+  if [[ -d "$worktree_path" ]]; then
+    if ! git -C "$primary_repo" worktree remove --force "$worktree_path" >/dev/null 2>&1; then
+      die "Failed to remove completed worktree: $worktree_path"
+    fi
+    echo "Removed completed worktree: $worktree_path"
+  else
+    echo "Worktree already absent: $worktree_path"
+  fi
+
+  if git -C "$primary_repo" rev-parse --verify "$branch_name" >/dev/null 2>&1; then
+    if ! git -C "$primary_repo" branch -D "$branch_name" >/dev/null 2>&1; then
+      die "Failed to delete completed branch: $branch_name"
+    fi
+    echo "Deleted completed branch: $branch_name"
+  else
+    echo "Branch already absent: $branch_name"
+  fi
+}
+
+cmd_task_complete() {
+  load_runtime_context
+
+  local agent="${1:-}"
+  local scope_raw="${2:-}"
+  local task_id="${3:-}"
+  shift 3 || true
+
+  local scope
+  scope="$(normalize_scope "$scope_raw")"
+  local summary="task complete"
+  local trigger_label="task_done"
+  local auto_run_start=1
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --summary)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --summary"
+        summary="$1"
+        ;;
+      --trigger)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --trigger"
+        trigger_label="$1"
+        ;;
+      --no-run-start)
+        auto_run_start=0
+        ;;
+      *)
+        die "Unknown task complete option: $1"
+        ;;
+    esac
+    shift || true
+  done
+
+  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start]"
+
+  require_agent_worktree_context
+  initialize_task_state
+
+  local lock_file="$LOCK_DIR/$scope.lock"
+  [[ -f "$lock_file" ]] || die "No lock: scope=$scope"
+
+  local owner lock_task
+  owner="$(read_field "$lock_file" "owner")"
+  lock_task="$(read_field "$lock_file" "task_id")"
+  [[ "$owner" == "$agent" ]] || die "Complete denied: scope=$scope owner=$owner requested_by=$agent"
+  [[ "$lock_task" == "$task_id" ]] || die "Complete denied: scope=$scope lock_task=$lock_task requested_task=$task_id"
+
+  local todo_rel tracked_changes line changed_path
+  todo_rel="$TODO_FILE"
+  if [[ "$TODO_FILE" == "$REPO_ROOT/"* ]]; then
+    todo_rel="${TODO_FILE#"$REPO_ROOT/"}"
+  else
+    todo_rel="$(basename "$TODO_FILE")"
+  fi
+
+  tracked_changes="$(git -C "$REPO_ROOT" status --porcelain --untracked-files=no)"
+  if [[ -n "$tracked_changes" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      changed_path="${line:3}"
+      if [[ "$changed_path" == *" -> "* ]]; then
+        changed_path="${changed_path##* -> }"
+      fi
+      if [[ "$changed_path" != "$todo_rel" ]]; then
+        die "agent worktree has tracked uncommitted changes outside TODO file: $changed_path (commit first)"
+      fi
+    done <<< "$tracked_changes"
+  fi
+
+  update_todo_status "$task_id" "DONE"
+  append_update_log "$agent" "$task_id" "DONE" "$summary"
+  echo "Marked task DONE in worktree: task=$task_id owner=$agent"
+
+  commit_completion_marker_if_needed "$task_id" "$summary"
+
+  local branch_name primary_repo
+  branch_name="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
+  primary_repo="$(primary_repo_root_for "$REPO_ROOT" || true)"
+  [[ -n "$primary_repo" ]] || die "Unable to resolve primary repo from worktree: $REPO_ROOT"
+
+  merge_task_branch_into_primary "$primary_repo" "$branch_name" "$BASE_BRANCH"
+
+  rm -f "$lock_file"
+  echo "Unlocked: scope=$scope by=$agent"
+
+  remove_completed_worktree_and_branch "$primary_repo" "$REPO_ROOT" "$branch_name"
+
+  if [[ "$auto_run_start" -eq 1 ]]; then
+    local -a run_cmd=("$TEAM_BIN" --repo "$primary_repo" --state-dir "$STATE_DIR")
+    if [[ -n "${TEAM_CONFIG_ARG:-}" ]]; then
+      run_cmd+=(--config "$TEAM_CONFIG_ARG")
+    fi
+    run_cmd+=(run start --trigger "$trigger_label")
+
+    echo "Triggering scheduler after completion: trigger=$trigger_label"
+    "${run_cmd[@]}"
+  fi
+
+  echo "Task completion flow finished: task=$task_id owner=$agent scope=$scope"
+}
+
 cmd_worktree_create() {
   load_runtime_context
 
@@ -903,6 +1086,40 @@ for item in excluded:
 PY
 }
 
+acquire_scheduler_lock() {
+  local run_lock_dir="${1:-}"
+  local pid_file="${run_lock_dir}/pid"
+  local lock_pid=""
+
+  mkdir -p "$(dirname "$run_lock_dir")"
+
+  if mkdir "$run_lock_dir" 2>/dev/null; then
+    echo "$$" > "$pid_file"
+    return 0
+  fi
+
+  if [[ -f "$pid_file" ]]; then
+    lock_pid="$(tr -d '[:space:]' < "$pid_file")"
+  fi
+
+  if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" >/dev/null 2>&1; then
+    echo "Scheduler is already running: $run_lock_dir (pid=$lock_pid)"
+    return 1
+  fi
+
+  echo "Found stale scheduler lock: $run_lock_dir"
+  rm -f "$pid_file" >/dev/null 2>&1 || true
+  rmdir "$run_lock_dir" >/dev/null 2>&1 || true
+
+  if ! mkdir "$run_lock_dir" 2>/dev/null; then
+    echo "Scheduler is already running: $run_lock_dir"
+    return 1
+  fi
+
+  echo "$$" > "$pid_file"
+  return 0
+}
+
 cmd_run_start() {
   local dry_run=0
   local no_launch=1
@@ -962,14 +1179,11 @@ cmd_run_start() {
   ready_tsv="$("$PYTHON_BIN" "$PY_ENGINE" "${ready_cmd[@]}" --format tsv)"
 
   local run_lock_dir="$ORCH_DIR/run.lock"
-  mkdir -p "$ORCH_DIR"
-  if ! mkdir "$run_lock_dir" 2>/dev/null; then
-    echo "Scheduler is already running: $run_lock_dir"
+  if ! acquire_scheduler_lock "$run_lock_dir"; then
     return
   fi
 
-  echo "$$" > "$run_lock_dir/pid"
-  trap "rmdir '$run_lock_dir' >/dev/null 2>&1 || true" EXIT
+  trap "rm -f '$run_lock_dir/pid' >/dev/null 2>&1 || true; rmdir '$run_lock_dir' >/dev/null 2>&1 || true" EXIT
 
   local started_count=0
   while IFS=$'\t' read -r task_id task_title owner scope deps status; do
@@ -1003,6 +1217,7 @@ cmd_run_start() {
 
   echo "Started tasks: $started_count"
 
+  rm -f "$run_lock_dir/pid" >/dev/null 2>&1 || true
   rmdir "$run_lock_dir" >/dev/null 2>&1 || true
   trap - EXIT
 
