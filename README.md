@@ -1,6 +1,75 @@
-# CODEX TEAMS CLI
+# codex-teams
 
-Unified orchestration CLI for git-worktree based multi-agent execution.
+<p align="center">
+  Orchestrate multi-agent coding on git worktrees with explicit lifecycle and state.
+</p>
+
+<p align="center">
+  <img alt="multi-agent" src="https://img.shields.io/badge/Multi--Agent-Worktree%20Native-111827?style=for-the-badge">
+  <img alt="scheduler" src="https://img.shields.io/badge/Scheduler-TODO.md%20Driven-0f766e?style=for-the-badge">
+  <img alt="runtime" src="https://img.shields.io/badge/Runtime-Codex%20Workers-0b3b8f?style=for-the-badge">
+  <img alt="coordination" src="https://img.shields.io/badge/Coordination-Locks%20%2B%20PID%20Guardrails-7c2d12?style=for-the-badge">
+</p>
+
+`codex-teams` is a unified orchestration CLI for teams running parallel coding agents.
+It provides an orchestration layer between worker launch and task completion:
+
+- scheduler-ready task selection from `TODO.md`
+- lock + PID based runtime safety
+- explicit finish flow (`task complete`) for merge + cleanup
+- interactive dashboard with emergency controls
+
+## Start here: Codex skill (recommended)
+
+This repo ships an installable Codex skill.
+
+- skill manifest: `skills/.curated/codex-teams/SKILL.md`
+- installer path: `skills/.curated/codex-teams`
+
+Install with Codex skill installer (after pushing this repo to GitHub):
+
+```bash
+python3 /Users/jaycho/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
+  --repo <owner>/codex-teams-cli \
+  --path skills/.curated/codex-teams
+```
+
+After install, restart Codex to pick up the skill.
+
+Use it as the default workflow:
+
+1. In Codex task prompts, include `$codex-teams` to apply guardrails.
+2. For scheduled runs, start tasks with `scripts/codex-teams run start`.
+3. Monitor and control execution with `scripts/codex-teams` (TUI).
+
+## Why codex-teams
+
+`codex-teams` is opinionated about the full task lifecycle:
+
+1. Start work from the scheduler (`run start`)
+2. Track ownership and heartbeat with explicit runtime state
+3. Finish with merge strategy + cleanup guardrails (`task complete`)
+
+This is designed to reduce common multi-agent failure modes: duplicate starts, owner collisions, stale locks, and "done but not merged."
+
+## 60-second quickstart
+
+```bash
+# 1) Initialize task domain and state hygiene
+scripts/codex-teams task init
+
+# 2) Start ready tasks from TODO.md
+scripts/codex-teams run start
+
+# 3) Open live dashboard (default command = status --tui)
+scripts/codex-teams
+```
+
+Interactive TUI requires:
+
+```bash
+python3 -m pip install textual
+```
 
 ## Entry point
 
@@ -8,24 +77,39 @@ Unified orchestration CLI for git-worktree based multi-agent execution.
 scripts/codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] <command>
 ```
 
-## Commands
+No command defaults to the interactive dashboard (`status --tui`).
 
-### Unified status
+## System flow
+
+```mermaid
+flowchart LR
+  A["TODO.md"] --> B["run start"]
+  B --> C["worktree start/create"]
+  C --> D["codex exec worker"]
+  D --> E["task update / heartbeat"]
+  E --> F["task complete"]
+  F --> G["merge + cleanup + optional auto run start"]
+```
+
+## Command surface
+
+### Status and dashboard
 
 ```bash
+scripts/codex-teams
+scripts/codex-teams dashboard [--trigger <label>] [--max-start <n>]
 scripts/codex-teams status [--json|--tui] [--trigger <label>] [--max-start <n>]
 ```
 
-Includes scheduler readiness, excluded tasks (with reasons), runtime state counts, and lock snapshots.
+What you get:
 
-- `--tui`: launch interactive status dashboard via `textual` (TTY required).
-- TUI shows a dashboard layout with settings panel (logo+config), ready tasks, running agents, and a bottom `Task / Log` tab panel (switch with `1` / `2`).
-- TUI supports run start (`r`) and emergency stop (`e`) with confirmation modals.
-- TUI auto-refreshes scheduler/runtime/task-board state every 2 seconds.
-- If `--tui` is used in non-interactive execution (tests/CI), it falls back to text output.
-- Install dependency for interactive mode: `python3 -m pip install textual`
+- scheduler readiness and excluded tasks (with reasons)
+- runtime state counts and lock snapshots
+- TUI controls: run start (`r`), emergency stop (`e`), tab switch (`1` / `2`)
+- auto-refresh every 2 seconds
+- automatic fallback to text mode for non-interactive runs (CI/tests)
 
-### Task domain (state + runtime merged)
+### Task domain
 
 ```bash
 scripts/codex-teams task init [--gitignore <ask|yes|no>]
@@ -40,28 +124,20 @@ scripts/codex-teams task emergency-stop [--reason <text>] [--yes]
 scripts/codex-teams emergency-stop [--reason <text>] [--yes]
 ```
 
-`task init` checks whether the state directory path is ignored in `.gitignore`.
-- `--gitignore ask` (default): prompt in interactive TTY, print hint in non-interactive runs.
-- `--gitignore yes`: append state path automatically when missing.
-- `--gitignore no`: skip updates.
+Behavior notes:
 
-`task complete` behavior:
-- does not create commits
-- requires task worktree to be fully committed and task status already `DONE`
-- use it as the final step to merge task branch and clean up worktree/branch
-- merge strategy default: `rebase-then-ff` (auto-rebase task branch onto `main` when ff-only merge fails)
-- use `--merge-strategy ff-only` to keep strict fast-forward behavior
+- `task init` manages `.gitignore` for state path (`ask` default, `yes`, `no`)
+- `task complete` does not create commits
+- `task complete` requires fully committed worktree and `DONE` task status
+- default merge strategy is `rebase-then-ff`; strict mode is `--merge-strategy ff-only`
+- `task emergency-stop` wraps `task stop --all --apply` with confirmation
 
-`task emergency-stop` behavior:
-- wraps `task stop --all --apply` as a single command
-- requires interactive confirmation (type `yes`)
-- use `--yes` to skip confirmation (for non-interactive runs/automation)
+Commit message contract (task worktree):
 
-Commit message rules (task worktree):
-- Use `<type>: <summary> (<task_id>)` for deliverable commits.
-- Allowed `<type>`: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`.
-- Use `chore: mark <task_id> done` for the final DONE marker commit before `task complete`.
-- Avoid generic messages like `update`, `done`, `task complete`.
+- format: `<type>: <summary> (<task_id>)`
+- allowed types: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
+- final DONE marker commit: `chore: mark <task_id> done`
+- avoid generic messages like `update`, `done`, `task complete`
 
 ### Worktree domain
 
@@ -77,51 +153,40 @@ scripts/codex-teams worktree list
 scripts/codex-teams run start [--dry-run] [--no-launch] [--trigger <label>] [--max-start <n>]
 ```
 
-Default behavior launches detached `codex exec` workers and emits pid metadata under `.state/orchestrator/*.pid`.
-Use `--no-launch` for start-only mode (create worktree/lock/state transitions without worker launch).
-If task start/launch fails (for example lock conflicts), scheduler rollback will release owned lock/state and terminate spawned `codex` background pids before cleanup.
-Launch workers are started as detached session processes so they survive scheduler command exit.
-Launch command includes `--add-dir` for state dir and primary repo so worker-side `task update/complete` can write orchestration metadata and finalize.
-If sandbox mode is not explicitly set in `runtime.codex_flags`, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox` so git completion flow can write `index.lock` under primary `.git/worktrees`.
-Worker prompt requests `$codex-teams` to enforce execution quality gates.
-The guardrail contract enforces lifecycle: start by `run start`, finish by `task complete`.
+Runtime behavior:
 
-### Worker skill install
+- default launches detached `codex exec` workers
+- writes PID metadata to `.state/orchestrator/*.pid`
+- `--no-launch` keeps start-only mode (state/worktree transitions without worker launch)
+- on start/launch failure, scheduler rollback releases owned state/locks and kills spawned background workers
+- launch command adds state dir and primary repo via `--add-dir` so workers can run `task update/complete`
+- if `runtime.codex_flags` does not set sandbox mode, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox`
+- worker prompt requests `$codex-teams` skill guardrails
 
-This repo includes an installable skill:
+## Ready task selection
 
-- `skills/.curated/codex-teams`
+`run start` and `status` derive ready tasks from `TODO.md`, then exclude tasks with active signals:
 
-Install with Codex skill installer (after pushing repo to GitHub):
+- `active_worker`
+- `active_lock`
+- `owner_busy`
+- `deps_not_ready`
+- `active_signal_conflict`
 
-```bash
-python3 /Users/jaycho/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo <owner>/codex-teams-cli \
-  --path skills/.curated/codex-teams
-```
+This blocks duplicate auto-start even when `main` branch still shows `TODO` rows while work is running in task worktrees.
 
-After install: restart Codex.
+## Skill files
 
-## Ready task selection behavior
-
-`run start` and `status` derive ready tasks from `TODO.md`, then exclude tasks when any active signal exists:
-
-- `active_worker`: alive pid metadata exists
-- `active_lock`: lock-only active record exists
-- `owner_busy`: same owner already has an active task
-- `deps_not_ready`: dependencies are not satisfied
-- `active_signal_conflict`: lock/pid conflict for the same task
-
-This prevents duplicate auto-start when `main` TODO rows are still `TODO` while work continues in subtree worktrees.
+- `skills/.curated/codex-teams/SKILL.md`: worker execution guardrails
 
 ## Bootstrap behavior
 
-- Missing config file is auto-created at `.state/orchestrator.toml`.
-- Missing `TODO.md` is auto-created with a minimal table template when needed.
+- Missing config file is auto-created at `.state/orchestrator.toml`
+- Missing `TODO.md` is auto-created with a minimal table template
 
-## Legacy surface
+## Removed legacy surface
 
-Legacy command surfaces are intentionally removed:
+Legacy commands intentionally removed:
 
 - `scripts/orch`
 - `coord ...`
@@ -130,7 +195,7 @@ Legacy command surfaces are intentionally removed:
 
 Use `scripts/codex-teams status` and `scripts/codex-teams task ...` instead.
 
-## Testing
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -p 'test_*.py'
@@ -147,3 +212,7 @@ bash tests/smoke/test_task_complete_commit_summary_fallback.sh
 bash tests/smoke/test_task_complete_auto_rebase_merge.sh
 bash tests/smoke/test_status_tui_fallback.sh
 ```
+
+## License
+
+MIT. See `LICENSE`.
