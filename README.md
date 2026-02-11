@@ -74,3 +74,10 @@ Legacy command surfaces are intentionally removed:
 - `run status`
 
 Use `scripts/codex-teams status` and `scripts/codex-teams task ...` instead.
+
+## Testing
+
+```bash
+python3 -m unittest discover -s tests -p 'test_*.py'
+bash tests/smoke/test_run_start_dry_run.sh
+```
