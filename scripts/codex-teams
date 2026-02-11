@@ -19,7 +19,7 @@ codex_teams_usage() {
 Usage:
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] status [--json|--tui] [--trigger <label>] [--max-start <n>]
 
-  codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task init
+  codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task init [--gitignore <ask|yes|no>]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task lock <agent> <scope> [task_id]
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task unlock <agent> <scope>
   codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] task heartbeat <agent> <scope>

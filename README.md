@@ -27,7 +27,7 @@ Includes scheduler readiness, excluded tasks (with reasons), runtime state count
 ### Task domain (state + runtime merged)
 
 ```bash
-scripts/codex-teams task init
+scripts/codex-teams task init [--gitignore <ask|yes|no>]
 scripts/codex-teams task lock <agent> <scope> [task_id]
 scripts/codex-teams task unlock <agent> <scope>
 scripts/codex-teams task heartbeat <agent> <scope>
@@ -37,6 +37,11 @@ scripts/codex-teams task stop (--task <id> | --owner <owner> | --all) [--reason 
 scripts/codex-teams task cleanup-stale [--apply]
 scripts/codex-teams task emergency-stop [--reason <text>] [--apply]
 ```
+
+`task init` checks whether the state directory path is ignored in `.gitignore`.
+- `--gitignore ask` (default): prompt in interactive TTY, print hint in non-interactive runs.
+- `--gitignore yes`: append state path automatically when missing.
+- `--gitignore no`: skip updates.
 
 ### Worktree domain
 
@@ -55,6 +60,7 @@ scripts/codex-teams run start [--dry-run] [--launch|--no-launch] [--trigger <lab
 Default behavior is start-only (`no-launch`): it creates/locks/updates task state but does not launch codex workers.
 Use `--launch` to start detached `codex exec` workers and emit pid metadata under `.state/orchestrator/*.pid`.
 If task start/launch fails (for example lock conflicts), scheduler rollback will release owned lock/state and terminate spawned `codex` background pids before cleanup.
+Launch workers are started as detached session processes so they survive scheduler command exit.
 
 ## Ready task selection behavior
 
@@ -94,6 +100,8 @@ bash tests/smoke/test_run_start_after_done.sh
 bash tests/smoke/test_run_start_launch_codex_exec.sh
 bash tests/smoke/test_run_start_rollback_kills_codex_on_launch_error.sh
 bash tests/smoke/test_run_start_scenario.sh
+bash tests/smoke/test_task_init_gitignore.sh
 bash tests/smoke/test_task_complete_auto_run_start.sh
+bash tests/smoke/test_task_complete_clears_pid_metadata.sh
 bash tests/smoke/test_status_tui_fallback.sh
 ```

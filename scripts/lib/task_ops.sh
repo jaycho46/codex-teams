@@ -146,9 +146,131 @@ initialize_task_state() {
   ensure_todo_template
 }
 
+state_dir_gitignore_entry() {
+  local root="${REPO_ROOT%/}"
+  local state="${STATE_DIR%/}"
+
+  if [[ "$state" == "$root" ]]; then
+    echo ""
+    return 0
+  fi
+
+  if [[ "$state" == "$root/"* ]]; then
+    local rel="${state#"$root/"}"
+    [[ -n "$rel" ]] || {
+      echo ""
+      return 0
+    }
+    echo "${rel}/"
+    return 0
+  fi
+
+  echo ""
+}
+
+gitignore_has_state_entry() {
+  local entry="${1:-}"
+  local gitignore_file="$REPO_ROOT/.gitignore"
+  [[ -n "$entry" && -f "$gitignore_file" ]] || return 1
+
+  local bare="${entry%/}"
+  awk -v e="$entry" -v b="$bare" '
+    {
+      line=$0
+      sub(/\r$/, "", line)
+      gsub(/^[ \t]+|[ \t]+$/, "", line)
+      if (line == "" || line ~ /^#/) next
+      if (line == e || line == b || line == "/" e || line == "/" b) {
+        found=1
+      }
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$gitignore_file"
+}
+
+append_state_entry_to_gitignore() {
+  local entry="${1:-}"
+  local gitignore_file="$REPO_ROOT/.gitignore"
+  [[ -n "$entry" ]] || return 1
+
+  if [[ ! -f "$gitignore_file" ]]; then
+    printf "%s\n" "$entry" > "$gitignore_file"
+    return 0
+  fi
+
+  if [[ -s "$gitignore_file" ]]; then
+    printf "\n%s\n" "$entry" >> "$gitignore_file"
+  else
+    printf "%s\n" "$entry" >> "$gitignore_file"
+  fi
+}
+
+maybe_configure_state_gitignore() {
+  local mode="${1:-ask}"
+  local entry answer
+
+  entry="$(state_dir_gitignore_entry)"
+  if [[ -z "$entry" ]]; then
+    echo "State dir is outside repository; skip .gitignore update: $STATE_DIR"
+    return 0
+  fi
+
+  if gitignore_has_state_entry "$entry"; then
+    echo ".gitignore already contains state path: $entry"
+    return 0
+  fi
+
+  case "$mode" in
+    yes)
+      append_state_entry_to_gitignore "$entry"
+      echo "Added state path to .gitignore: $entry"
+      ;;
+    no)
+      echo "Skipped .gitignore update for state path: $entry"
+      ;;
+    ask)
+      if [[ -t 0 && -t 1 ]]; then
+        printf "Add '%s' to .gitignore? [y/N]: " "$entry"
+        read -r answer
+        if [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+          append_state_entry_to_gitignore "$entry"
+          echo "Added state path to .gitignore: $entry"
+        else
+          echo "Skipped .gitignore update for state path: $entry"
+        fi
+      else
+        echo "State path missing in .gitignore: $entry"
+        echo "Tip: run 'codex-teams task init --gitignore yes' to add it automatically."
+      fi
+      ;;
+    *)
+      die "Invalid --gitignore mode: $mode (expected ask|yes|no)"
+      ;;
+  esac
+}
+
 cmd_task_init() {
+  local gitignore_mode="ask"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --gitignore)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --gitignore"
+        gitignore_mode="$1"
+        ;;
+      --gitignore=*)
+        gitignore_mode="${1#*=}"
+        ;;
+      *)
+        die "Unknown task init option: $1"
+        ;;
+    esac
+    shift || true
+  done
+
   load_runtime_context
   initialize_task_state
+  maybe_configure_state_gitignore "$gitignore_mode"
   echo "Initialized state store: $STATE_DIR"
 }
 
@@ -433,6 +555,7 @@ cmd_task_complete() {
   echo "Unlocked: scope=$scope by=$agent"
 
   remove_completed_worktree_and_branch "$primary_repo" "$REPO_ROOT" "$branch_name"
+  remove_pid_metadata_for_task "$task_id"
 
   if [[ "$auto_run_start" -eq 1 ]]; then
     local -a run_cmd=("$TEAM_BIN" --repo "$primary_repo" --state-dir "$STATE_DIR")
@@ -1056,6 +1179,33 @@ cmd_task_emergency_stop() {
   fi
 }
 
+pid_meta_path_for_task() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || return 1
+
+  local task_slug
+  task_slug="$(sanitize "$task_id")"
+  [[ -n "$task_slug" ]] || task_slug="$task_id"
+  echo "$ORCH_DIR/${task_slug}.pid"
+}
+
+remove_pid_metadata_for_task() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" ]] || return 0
+
+  local pid_meta
+  pid_meta="$(pid_meta_path_for_task "$task_id" || true)"
+  [[ -n "$pid_meta" ]] || return 0
+
+  if [[ -f "$pid_meta" ]]; then
+    rm -f "$pid_meta" >/dev/null 2>&1 || true
+    echo "Removed pid metadata for task=$task_id"
+    return 0
+  fi
+
+  return 0
+}
+
 split_shell_words() {
   local raw="${1:-}"
   "$PYTHON_BIN" - "$raw" <<'PY'
@@ -1068,6 +1218,39 @@ if not raw.strip():
 
 for token in shlex.split(raw):
     print(token)
+PY
+}
+
+spawn_detached_process() {
+  local log_file="${1:-}"
+  shift || true
+  [[ -n "$log_file" ]] || return 1
+  [[ $# -gt 0 ]] || return 1
+
+  "$PYTHON_BIN" - "$log_file" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+log_file = sys.argv[1]
+cmd = sys.argv[2:]
+if not cmd:
+    raise SystemExit(2)
+
+log_dir = os.path.dirname(log_file)
+if log_dir:
+    os.makedirs(log_dir, exist_ok=True)
+
+with open(log_file, "ab", buffering=0) as stream:
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=stream,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+print(proc.pid)
 PY
 }
 
@@ -1111,14 +1294,15 @@ launch_codex_exec_worker() {
   command -v codex >/dev/null 2>&1 || die "codex command not found. Install Codex CLI or use --no-launch."
 
   local pid_meta logs_dir log_file pid started_at prompt
-  local task_slug
-  task_slug="$(sanitize "$task_id")"
-  [[ -n "$task_slug" ]] || task_slug="$task_id"
+  pid_meta="$(pid_meta_path_for_task "$task_id" || true)"
+  [[ -n "$pid_meta" ]] || {
+    echo "[ERROR] Failed to resolve pid metadata path for task=$task_id"
+    return 1
+  }
 
-  pid_meta="$ORCH_DIR/${task_slug}.pid"
   logs_dir="$ORCH_DIR/logs"
   mkdir -p "$logs_dir"
-  log_file="$logs_dir/${task_slug}-$(date -u +%Y%m%dT%H%M%SZ).log"
+  log_file="$logs_dir/$(basename "${pid_meta%.pid}")-$(date -u +%Y%m%dT%H%M%SZ).log"
 
   if [[ -f "$pid_meta" ]]; then
     local existing_pid
@@ -1144,10 +1328,13 @@ launch_codex_exec_worker() {
   fi
   codex_cmd+=(--cd "$worktree_path" "$prompt")
 
-  nohup "${codex_cmd[@]}" >"$log_file" 2>&1 &
-  pid="$!"
+  pid="$(spawn_detached_process "$log_file" "${codex_cmd[@]}" || true)"
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] Failed to launch detached codex process: task=$task_id owner=$owner"
+    return 1
+  fi
 
-  sleep 0.2
+  sleep 0.5
   if ! kill -0 "$pid" >/dev/null 2>&1; then
     echo "[ERROR] codex exec exited immediately: task=$task_id owner=$owner log=$log_file"
     return 1
@@ -1192,12 +1379,10 @@ rollback_start_attempt() {
   local preferred_worktree_path="${7:-}"
   local reason="${8:-start failed}"
 
-  local task_slug pid_meta pid tmux_session launch_label
-  task_slug="$(sanitize "$task_id")"
-  [[ -n "$task_slug" ]] || task_slug="$task_id"
-  pid_meta="$ORCH_DIR/${task_slug}.pid"
+  local pid_meta pid tmux_session launch_label
+  pid_meta="$(pid_meta_path_for_task "$task_id" || true)"
 
-  if [[ -f "$pid_meta" ]]; then
+  if [[ -n "$pid_meta" && -f "$pid_meta" ]]; then
     pid="$(read_field "$pid_meta" "pid")"
     tmux_session="$(read_field "$pid_meta" "tmux_session")"
     launch_label="$(read_field "$pid_meta" "launch_label")"
