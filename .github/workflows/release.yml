@@ -1,0 +1,156 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z]+)*$ ]]; then
+            echo "Invalid release tag: $tag" >&2
+            exit 1
+          fi
+
+          repo="${GITHUB_REPOSITORY#*/}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.tag }}
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify signed tag
+        env:
+          RELEASE_GPG_PUBLIC_KEY: ${{ secrets.RELEASE_GPG_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_GPG_PUBLIC_KEY}" ]]; then
+            echo "Missing required secret: RELEASE_GPG_PUBLIC_KEY" >&2
+            exit 1
+          fi
+
+          export GNUPGHOME
+          GNUPGHOME="$(mktemp -d)"
+          trap 'rm -rf "$GNUPGHOME"' EXIT
+
+          printf '%s' "${RELEASE_GPG_PUBLIC_KEY}" | gpg --batch --import
+          git fetch --force --tags origin
+          git tag -v "${{ steps.meta.outputs.tag }}"
+
+      - name: Run release test suite
+        run: bash scripts/run_ci_tests.sh
+
+      - name: Build release assets
+        id: assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+
+          tarball_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${{ steps.meta.outputs.tag }}.tar.gz"
+          curl -fsSL "$tarball_url" -o release-assets/source.tar.gz
+
+          install_script_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${{ steps.meta.outputs.tag }}/scripts/install-codex-teams.sh"
+          cp scripts/install-codex-teams.sh release-assets/install-codex-teams.sh
+          chmod +x release-assets/install-codex-teams.sh
+
+          tarball_sha256="$(sha256sum release-assets/source.tar.gz | awk '{print $1}')"
+          installer_sha256="$(sha256sum release-assets/install-codex-teams.sh | awk '{print $1}')"
+
+          {
+            printf "%s  %s\n" "$tarball_sha256" "source.tar.gz"
+            printf "%s  %s\n" "$tarball_sha256" "$tarball_url"
+            printf "%s  %s\n" "$installer_sha256" "install-codex-teams.sh"
+          } > release-assets/SHA256SUMS
+
+          echo "tarball_sha256=${tarball_sha256}" >> "$GITHUB_OUTPUT"
+          echo "installer_sha256=${installer_sha256}" >> "$GITHUB_OUTPUT"
+          echo "install_script_url=${install_script_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign checksums manifest
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes \
+            --output-signature release-assets/SHA256SUMS.sig \
+            --output-certificate release-assets/SHA256SUMS.pem \
+            release-assets/SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          generate_release_notes: true
+          append_body: true
+          make_latest: true
+          body: |
+            ## Install (latest)
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install-codex-teams.sh | bash
+            ```
+
+            ## Install (this release)
+            ```bash
+            curl -fsSL ${{ steps.assets.outputs.install_script_url }} | bash -s -- --repo ${{ github.repository }} --version ${{ steps.meta.outputs.tag }}
+            ```
+
+            ## Install (this release, signed verification)
+            ```bash
+            curl -fsSL ${{ steps.assets.outputs.install_script_url }} | bash -s -- --repo ${{ github.repository }} --version ${{ steps.meta.outputs.tag }} --verify-signature
+            ```
+
+            ## Checksums
+            - source tarball sha256: `${{ steps.assets.outputs.tarball_sha256 }}`
+            - installer sha256: `${{ steps.assets.outputs.installer_sha256 }}`
+
+            ## Verify signature manually
+            ```bash
+            curl -fsSLO https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/SHA256SUMS
+            curl -fsSLO https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/SHA256SUMS.sig
+            curl -fsSLO https://github.com/${{ github.repository }}/releases/download/${{ steps.meta.outputs.tag }}/SHA256SUMS.pem
+            cosign verify-blob \
+              --certificate SHA256SUMS.pem \
+              --signature SHA256SUMS.sig \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity-regexp '^https://github.com/${{ github.repository }}/\\.github/workflows/release\\.yml@.*$' \
+              SHA256SUMS
+            ```
+          files: |
+            release-assets/install-codex-teams.sh
+            release-assets/SHA256SUMS
+            release-assets/SHA256SUMS.sig
+            release-assets/SHA256SUMS.pem
+          overwrite_files: true

@@ -1,0 +1,54 @@
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+template: |
+  ## Summary
+  $CHANGES
+
+  ## Full Changelog
+  https://github.com/$OWNER/$REPOSITORY/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION
+
+categories:
+  - title: Features
+    labels:
+      - feat
+      - feature
+  - title: Fixes
+    labels:
+      - fix
+  - title: Refactors
+    labels:
+      - refactor
+  - title: Documentation
+    labels:
+      - docs
+  - title: Tests
+    labels:
+      - test
+  - title: Chores
+    labels:
+      - chore
+
+change-template: "- $TITLE (#$NUMBER) @$AUTHOR"
+no-changes-template: "- No user-facing changes in this release."
+sort-by: merged_at
+sort-direction: descending
+
+version-resolver:
+  major:
+    labels:
+      - major
+  minor:
+    labels:
+      - feat
+      - feature
+  patch:
+    labels:
+      - fix
+      - refactor
+      - docs
+      - test
+      - chore
+  default: patch
+
+exclude-labels:
+  - skip-changelog
