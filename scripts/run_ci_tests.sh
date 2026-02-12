@@ -6,6 +6,13 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$REPO_ROOT"
 
+# Ensure git commits in smoke tests work in CI environments that do not
+# define a default git identity.
+export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-Codex CI}"
+export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-codex-ci@example.com}"
+export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
+
 python3 -m unittest discover -s tests -p 'test_*.py'
 
 smoke_tests=(
