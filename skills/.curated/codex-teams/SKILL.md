@@ -29,14 +29,15 @@ Before running any workflow command, ensure the `codex-teams` CLI is installed:
 6. Do not manually edit lock/pid metadata files.
 7. Commit all task changes (deliverables + TODO/status updates) before `codex-teams task complete`, then use `task complete` as the last command for merge/worktree cleanup.
 8. If completion fails due to merge/rebase conflicts, try to resolve conflicts and re-run `task complete`; report `BLOCKED` only if it remains unresolved.
-9. For newly requested tasks, create them with `codex-teams task new <task_id> <summary>` and fully populate the generated spec before scheduling.
+9. For newly requested tasks, create them with `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>` and fully populate the generated spec before scheduling.
 
 ## Task Authoring (New Task)
 
 When asked to create a new task, use this flow:
 
 1. Create task row + spec template in one command:
-   - `codex-teams task new <task_id> <summary>`
+   - `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>`
+   - If the task has prerequisites, pass prerequisite task ids with `--deps` (for example: `--deps T2-100,T2-099`).
 2. Confirm the generated spec file exists:
    - `tasks/specs/<task_id>.md`
 3. Fill the generated form completely (do not leave template placeholders):

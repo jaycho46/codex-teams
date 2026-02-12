@@ -179,7 +179,7 @@ codex-teams task lock <agent> <scope> [task_id]
 codex-teams task unlock <agent> <scope>
 codex-teams task heartbeat <agent> <scope>
 codex-teams task update <agent> <task_id> <status> <summary>
-codex-teams task new <task_id> <summary>
+codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>
 codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]
 codex-teams task scaffold-specs [--task <id>] [--dry-run] [--force]
 codex-teams task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
@@ -194,13 +194,14 @@ Behavior notes:
 - `task complete` does not create commits
 - `task complete` requires fully committed worktree and `DONE` task status
 - `task new` appends a TODO row and creates `tasks/specs/<task_id>.md` in one step
+- `task new --deps` records prerequisite task ids in the `Deps` column
 - `task scaffold-specs` creates `tasks/specs/<task_id>.md` templates from TODO items
 - default merge strategy is `rebase-then-ff`; strict mode is `--merge-strategy ff-only`
 - `task emergency-stop` wraps `task stop --all --apply` with confirmation
 
 Task authoring workflow:
 
-1. Create tasks with `codex-teams task new <task_id> <summary>`.
+1. Create tasks with `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>`.
 2. Fill `Goal`, `In Scope`, and `Acceptance Criteria` in generated spec files.
 3. Verify scheduler eligibility with `codex-teams run start --dry-run`.
 
@@ -252,6 +253,9 @@ Spec helpers:
 ```bash
 # Add one new task row and spec in one command
 codex-teams task new T1-001 "Implement app shell bootstrap"
+
+# Add a task that depends on earlier tasks
+codex-teams task new T1-002 --deps T1-001,T1-000 "Implement domain service"
 
 # Preview files that would be created from TODO tasks
 codex-teams task scaffold-specs --dry-run

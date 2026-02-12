@@ -401,9 +401,42 @@ cmd_task_new() {
 
   local task_id="${1:-}"
   shift || true
-  local summary="${*:-}"
+  local deps_raw="-"
+  local -a summary_parts=()
+  local summary=""
 
-  [[ -n "$task_id" && -n "$summary" ]] || die "Usage: codex-teams task new <task_id> <summary>"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --deps)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --deps"
+        deps_raw="$1"
+        ;;
+      --deps=*)
+        deps_raw="${1#--deps=}"
+        [[ -n "$deps_raw" ]] || die "Missing value for --deps"
+        ;;
+      --)
+        shift || true
+        while [[ $# -gt 0 ]]; do
+          summary_parts+=("$1")
+          shift || true
+        done
+        break
+        ;;
+      --*)
+        die "Unknown task new option: $1"
+        ;;
+      *)
+        summary_parts+=("$1")
+        ;;
+    esac
+    shift || true
+  done
+
+  summary="$(trim "${summary_parts[*]:-}")"
+
+  [[ -n "$task_id" && -n "$summary" ]] || die "Usage: codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>"
   [[ "$task_id" != *"|"* ]] || die "task_id must not contain '|': $task_id"
 
   local default_owner
@@ -419,8 +452,9 @@ PY
 )"
   [[ -n "$default_owner" ]] || die "Unable to resolve default owner from [owners] config."
 
-  if ! "$PYTHON_BIN" - "$TODO_FILE" "$TODO_SCHEMA_JSON" "$task_id" "$summary" "$default_owner" <<'PY'
+  if ! "$PYTHON_BIN" - "$TODO_FILE" "$TODO_SCHEMA_JSON" "$task_id" "$summary" "$default_owner" "$deps_raw" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -429,6 +463,7 @@ schema = json.loads(sys.argv[2])
 task_id = sys.argv[3].strip()
 title = sys.argv[4].strip()
 owner = sys.argv[5].strip()
+deps_input = sys.argv[6].strip()
 
 if not task_id:
     print("Error: task_id is empty", file=sys.stderr)
@@ -436,6 +471,27 @@ if not task_id:
 if not title:
     print("Error: summary is empty", file=sys.stderr)
     raise SystemExit(2)
+
+deps_value = "-"
+if deps_input and deps_input != "-":
+    dep_values = []
+    seen = set()
+    for dep_raw in re.split(r"[,\s]+", deps_input):
+        dep = dep_raw.strip()
+        if not dep:
+            continue
+        if dep == task_id:
+            print(f"Error: task cannot depend on itself: {task_id}", file=sys.stderr)
+            raise SystemExit(2)
+        if not re.fullmatch(r"T\d+-\d+", dep):
+            print(f"Error: invalid dependency id '{dep}' (expected T<digits>-<digits>)", file=sys.stderr)
+            raise SystemExit(2)
+        if dep in seen:
+            continue
+        seen.add(dep)
+        dep_values.append(dep)
+    if dep_values:
+        deps_value = ",".join(dep_values)
 
 id_col = int(schema["id_col"])
 title_col = int(schema["title_col"])
@@ -483,7 +539,7 @@ def set_by_col(col_no: int, value: str) -> None:
 set_by_col(id_col, task_id)
 set_by_col(title_col, title)
 set_by_col(owner_col, owner)
-set_by_col(deps_col, "-")
+set_by_col(deps_col, deps_value)
 set_by_col(status_col, "TODO")
 
 notes_col = None

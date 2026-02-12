@@ -17,6 +17,9 @@ codex-teams init
 # 2) create task row + spec template together
 codex-teams task new T2-101 "Billing webhook retry policy"
 
+# optional: set prerequisite task ids
+codex-teams task new T2-102 --deps T2-101 "Billing webhook retry jitter tuning"
+
 # 3) edit generated files in tasks/specs/*.md
 
 # 4) verify scheduler eligibility
@@ -48,6 +51,7 @@ What this does:
 
 - appends a `TODO` row to `TODO.md`
 - uses the default owner (first entry in `[owners]` config)
+- records prerequisites in `Deps` when `--deps` is provided (comma/space separated task ids)
 - creates `tasks/specs/T2-101.md`
 
 ## Generate Specs (Bulk / Existing TODO Rows)
@@ -113,7 +117,7 @@ Scheduler readiness now enforces task specs.
 
 Immediate recovery sequence:
 
-1. Run `codex-teams task new <task_id> <summary>` for new tasks, or `task scaffold-specs` for existing rows.
+1. Run `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>` for new tasks, or `task scaffold-specs` for existing rows.
 2. Fill required sections in generated spec files.
 3. Re-run `codex-teams run start --dry-run`.
 4. Confirm exclusion reason is gone, then run `codex-teams run start`.
