@@ -18,7 +18,7 @@ from state_model import (
     load_pid_inventory,
     summarize,
 )
-from task_spec import evaluate_task_spec
+from task_spec import evaluate_task_spec, task_spec_rel_path
 from todo_parser import TodoError, build_indexes, deps_ready, parse_todo
 
 
@@ -590,24 +590,37 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
         from textual.app import App, ComposeResult
         from textual.containers import Grid, Container, Horizontal
         from textual.screen import ModalScreen
-        from textual.widgets import Button, DataTable, Footer, Header, Static, TabbedContent, TabPane
+        from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
     except ModuleNotFoundError:
         die("Textual is not installed. Install with: pip install textual")
+
+    try:
+        from textual.widgets.markdown import Markdown
+    except ImportError:
+        Markdown = None  # type: ignore[assignment]
 
     refresh_seconds = 2.0
 
     class ActionConfirmModal(ModalScreen[bool]):
         CSS = """
-        Screen {
+        #confirm_center {
+            width: 1fr;
+            height: 1fr;
             align: center middle;
-            background: $surface 60%;
         }
 
         #confirm_dialog {
             width: 68;
+            height: auto;
+            min-height: 0;
+            max-height: 90%;
             border: round $error;
             padding: 1 2;
-            background: $panel;
+            layout: vertical;
+        }
+
+        #confirm_body {
+            height: auto;
         }
 
         #confirm_actions {
@@ -630,11 +643,12 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.confirm_variant = variant
 
         def compose(self) -> ComposeResult:
-            with Container(id="confirm_dialog"):
-                yield Static(self.body_text)
-                with Horizontal(id="confirm_actions"):
-                    yield Button("Cancel (N)", id="cancel")
-                    yield Button(self.confirm_text, id="confirm", variant=self.confirm_variant)
+            with Container(id="confirm_center"):
+                with Container(id="confirm_dialog"):
+                    yield Static(self.body_text, id="confirm_body")
+                    with Horizontal(id="confirm_actions"):
+                        yield Button("Cancel (N)", id="cancel")
+                        yield Button(self.confirm_text, id="confirm", variant=self.confirm_variant)
 
         def action_confirm(self) -> None:
             self.dismiss(True)
@@ -645,36 +659,151 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
         def on_button_pressed(self, event: Button.Pressed) -> None:
             self.dismiss(event.button.id == "confirm")
 
-    class StatusTui(App[None]):
+    class TaskSpecModal(ModalScreen[None]):
         CSS = """
+        #spec_center {
+            width: 1fr;
+            height: 1fr;
+            align: center middle;
+        }
+
+        #spec_dialog {
+            width: 100%;
+            max-width: 140;
+            height: 100%;
+            max-height: 70;
+            layout: vertical;
+            padding: 1 1;
+        }
+
+        #spec_body {
+            height: 1fr;
+            overflow-y: auto;
+            color: #dce9ff;
+            border: round #dce9ff;
+            padding: 0 1;
+        }
+
+        #spec_footer {
+            margin-top: 1;
+            height: auto;
+            width: 100%;
+            align-vertical: middle;
+        }
+
+        #spec_meta {
+            width: 1fr;
+            color: #dce9ff;
+            content-align: left middle;
+        }
+
+        #spec_footer Button {
+            margin-left: 1;
+        }
+        """
+        BINDINGS = [
+            ("escape", "close_modal", "Close"),
+            ("q", "close_modal", "Close"),
+            ("enter", "close_modal", "Close"),
+        ]
+
+        def __init__(self, task_id: str, spec_path: str, body: str, status: str = "") -> None:
+            super().__init__()
+            self.task_id = task_id
+            self.spec_path = spec_path
+            self.body = body
+            self.status = status.strip()
+
+        def compose(self) -> ComposeResult:
+            meta_text = f"Task: {self.task_id}\nSpec: {self.spec_path}"
+            if self.status:
+                meta_text = f"{meta_text}\nStatus: {self.status}"
+            with Container(id="spec_center"):
+                with Container(id="spec_dialog"):
+                    if Markdown is not None:
+                        yield Markdown(self.body, id="spec_body")
+                    else:
+                        yield Static(Text(self.body), id="spec_body")
+                    with Horizontal(id="spec_footer"):
+                        yield Static(
+                            Text(
+                                meta_text,
+                                style="bold #dce9ff",
+                            ),
+                            id="spec_meta",
+                        )
+                        yield Button("Close (Enter/Esc)", id="close")
+
+        def action_close_modal(self) -> None:
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "close":
+                self.dismiss(None)
+
+    class StatusTui(App[None]):
+        ENABLE_COMMAND_PALETTE = False
+        CSS = """
+        StatusTui {
+            background: ansi_default;
+        }
+
         Screen {
             layout: vertical;
+            background: ansi_default;
         }
 
-        Header {
-            color: #e8f1ff;
-        }
-
-        Footer {
-            color: #d6e7ff;
+        #dashboard,
+        #meta,
+        #meta_left,
+        #meta_right,
+        #ready_table,
+        #agents_table,
+        #bottom_tabs,
+        #task_table,
+        #log_table,
+        DataTable,
+        TabbedContent,
+        TabPane {
+            background: ansi_default;
         }
 
         #dashboard {
             layout: grid;
             grid-size: 2 3;
             grid-columns: 1fr 1fr;
-            grid-rows: 1fr 1fr 1fr;
+            grid-rows: auto 1fr 1fr;
             height: 1fr;
             margin: 0 1 0 1;
         }
 
         #meta {
             column-span: 2;
-            height: 1fr;
+            height: 15;
+            min-height: 15;
+            layout: horizontal;
+            color: #dce9ff;
+        }
+
+        #meta_left {
+            width: 1fr;
+            height: 100%;
             min-height: 0;
+            overflow-y: auto;
             padding: 1 2;
             content-align: left top;
-            color: #dce9ff;
+        }
+
+        #meta_right {
+            width: auto;
+            height: 100%;
+            min-width: 32;
+            max-width: 40;
+            min-height: 0;
+            overflow-y: auto;
+            padding: 1;
+            content-align: left bottom;
+            color: #d6e7ff;
         }
 
         #ready_table {
@@ -726,9 +855,10 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.active_bottom_tab = "tasks_tab"
 
         def compose(self) -> ComposeResult:
-            yield Header(show_clock=True)
             with Grid(id="dashboard"):
-                yield Static(id="meta")
+                with Horizontal(id="meta"):
+                    yield Static(id="meta_left")
+                    yield Static(id="meta_right")
                 yield DataTable(id="ready_table")
                 yield DataTable(id="agents_table")
                 with TabbedContent(initial="tasks_tab", id="bottom_tabs"):
@@ -736,7 +866,6 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                         yield DataTable(id="task_table")
                     with TabPane("Log", id="log_tab"):
                         yield DataTable(id="log_table")
-            yield Footer()
 
         @staticmethod
         def _row_key(row: list[Any] | tuple[Any, ...], key_columns: tuple[int, ...]) -> tuple[str, ...]:
@@ -874,6 +1003,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             running_workers = [
                 worker for worker in runtime.get("workers", []) if bool(worker.get("pid_alive"))
             ]
+            active_label = "Task" if self.active_bottom_tab == "tasks_tab" else "Log"
             running_task_ids = {
                 task_id
                 for task_id in (
@@ -903,7 +1033,9 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             if orphan_running_task_ids:
                 effective_status_counts["IN_PROGRESS"] += len(orphan_running_task_ids)
 
-            meta = self.query_one("#meta", Static)
+            meta = self.query_one("#meta", Horizontal)
+            meta_left = self.query_one("#meta_left", Static)
+            meta_right = self.query_one("#meta_right", Static)
             refreshed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             repo_root = str(payload.get("repo_root", ""))
             state_dir = str(payload.get("state_dir", ""))
@@ -1033,7 +1165,22 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 render_lines.append(
                     Text(f"Last Error  {self.last_error}", style="bold red"))
 
-            meta.update(Group(*render_lines))
+            meta_left.update(Group(*render_lines))
+
+            palette_lines: list[Text] = [
+                Text("COMMANDS", style="bold"),
+                Text("  Ctrl+R   Run start"),
+                Text("  Ctrl+E   Emergency stop"),
+            ]
+            if self.last_error:
+                palette_lines.extend(
+                    [
+                        Text(""),
+                        Text("LAST ERROR", style="bold red"),
+                        Text(self.last_error, style="red"),
+                    ]
+                )
+            meta_right.update(Group(*palette_lines))
             meta.border_subtitle = f"{refresh_seconds:.0f}s interval"
 
             ready_table = self.query_one("#ready_table", DataTable)
@@ -1066,11 +1213,20 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
 
             task_table = self.query_one("#task_table", DataTable)
             task_rows: list[tuple[Any, ...]] = []
+            repo_root_path = Path(repo_root) if repo_root else None
             for item in reversed(task_items):
                 task_id = str(item.get("task_id", ""))
                 normalized_task_id = self._normalize_task_id(task_id)
                 task_status = "IN_PROGRESS" if normalized_task_id in running_task_ids else str(
                     item.get("status", ""))
+                spec_mark = "-"
+                if repo_root_path is not None and task_id:
+                    try:
+                        spec_exists = bool(evaluate_task_spec(
+                            repo_root_path, task_id).get("exists"))
+                    except Exception:
+                        spec_exists = False
+                    spec_mark = "O" if spec_exists else "-"
                 task_rows.append(
                     (
                         task_id,
@@ -1078,11 +1234,12 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                         str(item.get("owner", "")),
                         str(item.get("scope", "")),
                         self._status_cell(task_status),
+                        spec_mark,
                         str(item.get("deps", "")),
                     )
                 )
             self._fill_table(task_table, task_rows, ("-", "-",
-                             "-", "-", "-", "-"), key_columns=(0,))
+                             "-", "-", "-", "-", "-"), key_columns=(0,))
 
             log_table = self.query_one("#log_table", DataTable)
             log_rows = [
@@ -1098,11 +1255,12 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self._fill_table(log_table, log_rows, ("-", "-",
                              "-", "-", "-"), key_columns=(0, 1, 2, 3))
 
-            active_label = "Task" if self.active_bottom_tab == "tasks_tab" else "Log"
             subtitle = (
                 f"Press q to quit | Panel: {active_label} (1=Task, 2=Log) | "
                 f"Auto-refresh: {refresh_seconds:.0f}s"
             )
+            if self.active_bottom_tab == "tasks_tab":
+                subtitle = f"{subtitle} | Enter: open task spec"
             if self.last_error:
                 subtitle = f"{subtitle} | Last refresh failed"
             self.sub_title = subtitle
@@ -1144,7 +1302,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
 
         def _run_start(self) -> None:
             cmd = self._codex_teams_cmd()
-            cmd.extend(["run", "start", "--trigger", "status-tui"])
+            cmd.extend(["run", "start"])
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
                 detail = (proc.stderr.strip() or proc.stdout.strip()
@@ -1191,10 +1349,79 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             finally:
                 self.refresh_in_flight = False
 
+        def _selected_task_id(self) -> str:
+            task_table = self.query_one("#task_table", DataTable)
+            if not task_table.is_valid_row_index(task_table.cursor_row):
+                return ""
+            try:
+                row = task_table.get_row_at(task_table.cursor_row)
+            except Exception:
+                return ""
+            task_id = str(row[0] if row else "").strip()
+            if not task_id or task_id == "-":
+                return ""
+            return task_id
+
+        def _open_task_spec(self, task_id: str) -> None:
+            repo_root_raw = str(self.current_payload.get("repo_root", "")).strip()
+            if not repo_root_raw:
+                self.last_error = "cannot resolve repo root for task spec viewer"
+                self._render_payload()
+                return
+            repo_root = Path(repo_root_raw)
+
+            spec_meta = evaluate_task_spec(repo_root, task_id)
+            spec_path_raw = str(spec_meta.get("spec_path") or "").strip()
+            if not spec_path_raw:
+                spec_path_raw = str((repo_root / task_spec_rel_path(task_id)).resolve())
+            spec_path = Path(spec_path_raw)
+
+            if not spec_path.exists():
+                message = (
+                    "# Spec file not found\n\n"
+                    "Expected path:\n"
+                    f"- `{spec_path}`\n\n"
+                    "Create it with one of:\n"
+                    f"- `codex-teams task new {task_id} \"task summary\"`\n"
+                    f"- `codex-teams task scaffold-specs --task {task_id}`"
+                )
+                self.push_screen(TaskSpecModal(task_id, str(spec_path), message, status="Missing"))
+                return
+
+            try:
+                content = spec_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                message = (
+                    "# Failed to read spec file\n\n"
+                    f"- Error: `{type(exc).__name__}: {exc}`"
+                )
+                self.push_screen(TaskSpecModal(task_id, str(spec_path), message, status="Unreadable"))
+                return
+
+            validity = "valid" if bool(spec_meta.get("valid")) else "invalid"
+            errors = list(spec_meta.get("errors") or [])
+            if errors:
+                error_lines = ["## Validation errors", ""]
+                for err in errors:
+                    error_lines.append(f"- {err}")
+                error_lines.append("")
+                error_lines.append("---")
+                prefixed_content = "\n".join(error_lines) + "\n\n" + content
+            else:
+                prefixed_content = content
+            self.push_screen(
+                TaskSpecModal(
+                    task_id,
+                    str(spec_path),
+                    prefixed_content,
+                    status=("Valid" if validity == "valid" else "Invalid"),
+                )
+            )
+
         def on_mount(self) -> None:
             self.title = "codex-teams status"
             self.sub_title = "Press q to quit | Panel: Task (1=Task, 2=Log)"
-            meta = self.query_one("#meta", Static)
+            meta = self.query_one("#meta", Horizontal)
             meta.border_title = "Overview"
             meta.border_subtitle = "Auto-refresh"
 
@@ -1216,7 +1443,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             task_table.zebra_stripes = True
             task_table.cursor_type = "row"
             task_table.add_columns(
-                "Task", "Title", "Owner", "Scope", "Status", "Deps")
+                "Task", "Title", "Owner", "Scope", "Status", "Spec", "Deps")
 
             log_table = self.query_one("#log_table", DataTable)
             log_table.zebra_stripes = True
@@ -1246,15 +1473,15 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 if confirmed:
                     self._run_emergency_stop()
                 else:
-                    self.last_action = "Emergency stop canceled"
+                    self.last_action = "Stop-All canceled"
                     self._render_payload()
 
             self.push_screen(
                 ActionConfirmModal(
-                    "Emergency stop will run:\n"
+                    "This action will run:\n\n"
                     "codex-teams task stop --all --apply\n\n"
-                    "Proceed?",
-                    "Emergency Stop (Y)",
+                    "Are you sure you want to proceed?",
+                    "Yes (Y)",
                     variant="error",
                 ),
                 on_close,
@@ -1265,18 +1492,18 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 if confirmed:
                     self._run_start()
                 else:
-                    self.last_action = "Run start canceled"
+                    self.last_action = "Start canceled"
                     self._render_payload()
 
             self.push_screen(
                 ActionConfirmModal(
-                    "Run start will run:\n"
-                    "codex-teams run start --trigger status-tui\n\n"
-                    "Proceed?",
-                    "Run Start (Y)",
+                    "This action will run:\n\n"
+                    "codex-teams run start\n\n"
+                    "Are you sure you want to proceed?",
+                    "Yes (Y)",
                     variant="primary",
                 ),
-                on_close,
+                on_close
             )
 
         def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
@@ -1286,6 +1513,14 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             if pane_id in {"tasks_tab", "log_tab"}:
                 self.active_bottom_tab = pane_id
                 self._render_payload()
+
+        def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+            if getattr(event.data_table, "id", "") != "task_table":
+                return
+            task_id = self._selected_task_id()
+            if not task_id:
+                return
+            self._open_task_spec(task_id)
 
     StatusTui().run()
 

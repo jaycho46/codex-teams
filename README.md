@@ -166,6 +166,7 @@ What you get:
 - scheduler readiness and excluded tasks (with reasons)
 - runtime state counts and lock snapshots
 - TUI controls: run start (`r`), emergency stop (`e`), tab switch (`1` / `2`)
+- Task tab row action: select a task and press `Enter` to open its spec file
 - auto-refresh every 2 seconds
 - automatic fallback to text mode for non-interactive runs (CI/tests)
 
