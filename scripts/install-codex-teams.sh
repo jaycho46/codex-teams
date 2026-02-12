@@ -25,8 +25,8 @@ Usage:
 
 Examples:
   install-codex-teams.sh
-  install-codex-teams.sh --version v0.1.0
-  install-codex-teams.sh --version v0.1.0 --verify-signature
+  install-codex-teams.sh --version v0.1.1
+  install-codex-teams.sh --version v0.1.1 --verify-signature
   install-codex-teams.sh --repo acme/codex-teams --bin-dir "$HOME/.local/bin"
 
 Environment overrides:

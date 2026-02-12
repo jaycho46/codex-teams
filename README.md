@@ -97,13 +97,13 @@ curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/main/scripts/i
 Specific version (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/v0.1.0/scripts/install-codex-teams.sh | bash -s -- --repo jaycho46/codex-teams --version v0.1.0
+curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/v0.1.1/scripts/install-codex-teams.sh | bash -s -- --repo jaycho46/codex-teams --version v0.1.1
 ```
 
 Specific version + signed manifest verification:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/v0.1.0/scripts/install-codex-teams.sh | bash -s -- --repo jaycho46/codex-teams --version v0.1.0 --verify-signature
+curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/v0.1.1/scripts/install-codex-teams.sh | bash -s -- --repo jaycho46/codex-teams --version v0.1.1 --verify-signature
 ```
 
 Default install paths:
@@ -120,9 +120,9 @@ Installer verification behavior:
 Manual signature verification example:
 
 ```bash
-curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.0/SHA256SUMS
-curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.0/SHA256SUMS.sig
-curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.0/SHA256SUMS.pem
+curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.1/SHA256SUMS
+curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.1/SHA256SUMS.sig
+curl -fsSLO https://github.com/jaycho46/codex-teams/releases/download/v0.1.1/SHA256SUMS.pem
 cosign verify-blob \
   --certificate SHA256SUMS.pem \
   --signature SHA256SUMS.sig \
@@ -346,8 +346,8 @@ Release flow:
 git checkout main
 git pull --ff-only origin main
 bash scripts/run_ci_tests.sh
-git tag -s v0.1.0 -m "v0.1.0"
-git push origin v0.1.0
+git tag -s v0.1.1 -m "v0.1.1"
+git push origin v0.1.1
 ```
 
 After tag push, `release` will:
