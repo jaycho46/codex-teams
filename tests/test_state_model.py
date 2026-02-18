@@ -36,6 +36,8 @@ scope=app-shell
 pid=123
 worktree=/tmp/wt
 tmux_session=tmux-1
+launch_backend=tmux
+log_file=/tmp/wt.log
 """.strip()
                 + "\n",
                 encoding="utf-8",
@@ -58,6 +60,8 @@ worktree=/tmp/wt
             self.assertEqual(pid_rows[0]["task_id"], "T1-001")
             self.assertEqual(pid_rows[0]["key"], "T1-001")
             self.assertEqual(pid_rows[0]["pid"], "123")
+            self.assertEqual(pid_rows[0]["launch_backend"], "tmux")
+            self.assertEqual(pid_rows[0]["log_file"], "/tmp/wt.log")
 
             self.assertEqual(len(lock_rows), 1)
             self.assertEqual(lock_rows[0]["task_id"], "T1-001")
@@ -80,6 +84,8 @@ worktree=/tmp/wt
                     "pid_file": "T1.pid",
                     "worktree": str(existing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t1.log",
                 },
                 {
                     "key": "T3-001",
@@ -90,6 +96,8 @@ worktree=/tmp/wt
                     "pid_file": "T3.pid",
                     "worktree": str(existing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t3.log",
                 },
                 {
                     "key": "T4-001",
@@ -100,6 +108,8 @@ worktree=/tmp/wt
                     "pid_file": "T4.pid",
                     "worktree": str(existing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t4.log",
                 },
                 {
                     "key": "T6-001",
@@ -110,6 +120,8 @@ worktree=/tmp/wt
                     "pid_file": "T6.pid",
                     "worktree": str(missing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t6.log",
                 },
                 {
                     "key": "T7-001",
@@ -120,6 +132,8 @@ worktree=/tmp/wt
                     "pid_file": "T7.pid",
                     "worktree": str(missing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t7.log",
                 },
                 {
                     "key": "T9-001",
@@ -130,6 +144,8 @@ worktree=/tmp/wt
                     "pid_file": "T9.pid",
                     "worktree": str(existing),
                     "tmux_session": "",
+                    "launch_backend": "tmux",
+                    "log_file": "/tmp/t9.log",
                 },
             ]
             lock_rows = [
@@ -189,6 +205,8 @@ worktree=/tmp/wt
             self.assertEqual(by_task["T6-001"]["state"], "ORPHAN_PID")
             self.assertEqual(by_task["T7-001"]["state"], "MISSING_WORKTREE")
             self.assertEqual(by_task["T9-001"]["state"], "LOCK_STALE")
+            self.assertEqual(by_task["T1-001"]["launch_backend"], "tmux")
+            self.assertEqual(by_task["T1-001"]["log_file"], "/tmp/t1.log")
 
             summary = state_model.summarize(records)
             self.assertEqual(summary["state_counts"]["RUNNING"], 1)

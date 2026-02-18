@@ -22,6 +22,7 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(config_path.exists())
             self.assertIn("[repo]", config_path.read_text(encoding="utf-8"))
             self.assertEqual(config["repo"]["worktree_parent"], "../sample-repo-worktrees")
+            self.assertEqual(config["runtime"]["launch_backend"], "tmux")
 
     def test_resolve_context_state_dir_priority(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -55,6 +56,24 @@ AgentA = "app-shell"
 
 [todo]
 id_col = 0
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaises(ConfigError):
+                load_config(repo_root, str(cfg_path))
+
+    def test_invalid_launch_backend_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "invalid-backend-repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = repo_root / ".state" / "orchestrator.toml"
+            cfg_path.parent.mkdir(parents=True, exist_ok=True)
+            cfg_path.write_text(
+                """
+[runtime]
+launch_backend = "invalid"
 """.strip()
                 + "\n",
                 encoding="utf-8",

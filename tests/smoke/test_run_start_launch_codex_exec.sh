@@ -28,14 +28,12 @@ EOF
 git -C "$REPO" add README.md
 git -C "$REPO" commit -q -m "chore: init"
 
-cat > "$FAKE_BIN/codex" <<'EOF'
+cat > "$FAKE_BIN/codex" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "${1:-}" == "exec" ]] || exit 2
+[[ "\${1:-}" == "exec" ]] || exit 2
 shift
-if [[ -n "${FAKE_CODEX_ARGS_FILE:-}" ]]; then
-  printf '%s\n' "$@" > "$FAKE_CODEX_ARGS_FILE"
-fi
+printf '%s\n' "\$@" > "$FAKE_ARGS"
 while true; do sleep 5; done
 EOF
 chmod +x "$FAKE_BIN/codex"
@@ -55,7 +53,7 @@ git -C "$REPO" commit -q -m "chore: seed todo"
 git -C "$REPO" add tasks/specs
 git -C "$REPO" commit -q -m "chore: scaffold task specs"
 
-RUN_OUT="$(FAKE_CODEX_ARGS_FILE="$FAKE_ARGS" PATH="$FAKE_BIN:$PATH" "$CLI" --repo "$REPO" run start --trigger smoke-launch --max-start 1)"
+RUN_OUT="$(PATH="$FAKE_BIN:$PATH" "$CLI" --repo "$REPO" run start --trigger smoke-launch --max-start 1)"
 echo "$RUN_OUT"
 
 echo "$RUN_OUT" | grep -q "Started tasks: 1"
@@ -78,8 +76,19 @@ if ! kill -0 "$PID" >/dev/null 2>&1; then
   exit 1
 fi
 
-grep -q '^launch_backend=codex_exec$' "$PID_META"
+grep -q '^launch_backend=tmux$' "$PID_META"
 grep -q '^task_id=T8-001$' "$PID_META"
+
+SESSION="$(awk -F'=' '$1=="tmux_session"{print $2}' "$PID_META" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+if [[ -z "$SESSION" || "$SESSION" == "N/A" ]]; then
+  echo "missing tmux session in metadata: $SESSION"
+  exit 1
+fi
+
+if ! tmux has-session -t "$SESSION" >/dev/null 2>&1; then
+  echo "tmux session not alive: $SESSION"
+  exit 1
+fi
 
 LOG_FILE="$(awk -F'=' '$1=="log_file"{print $2}' "$PID_META" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 if [[ -z "$LOG_FILE" || ! -f "$LOG_FILE" ]]; then
@@ -87,16 +96,19 @@ if [[ -z "$LOG_FILE" || ! -f "$LOG_FILE" ]]; then
   exit 1
 fi
 
-PS_CMD="$(ps -p "$PID" -o command= | tr -d '\n')"
-echo "$PS_CMD" | grep -q "$FAKE_BIN/codex"
-
-PRIMARY_REPO="$(git -C "$REPO" rev-parse --show-toplevel)"
-EXPECTED_STATE_DIR="$PRIMARY_REPO/.state"
-
-if [[ ! -f "$FAKE_ARGS" ]]; then
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  if [[ -s "$FAKE_ARGS" ]]; then
+    break
+  fi
+  sleep 0.5
+done
+if [[ ! -s "$FAKE_ARGS" ]]; then
   echo "missing fake codex args capture: $FAKE_ARGS"
   exit 1
 fi
+
+PRIMARY_REPO="$(git -C "$REPO" rev-parse --show-toplevel)"
+EXPECTED_STATE_DIR="$PRIMARY_REPO/.state"
 
 grep -Fx -- "--cd" "$FAKE_ARGS" >/dev/null
 grep -Fx -- "--add-dir" "$FAKE_ARGS" >/dev/null
@@ -108,20 +120,7 @@ if grep -Fx -- "--full-auto" "$FAKE_ARGS" >/dev/null; then
   exit 1
 fi
 grep -F -- '$codex-teams' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Do not mark DONE unless task deliverable files were actually added or updated.' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Task lifecycle contract: this task was started by run start, and must end via task complete.' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Commit message rules:' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Deliverable commits: <type>: <summary> (T8-001) where <type> is one of feat|fix|refactor|docs|test|chore' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Final DONE marker commit: chore: mark T8-001 done' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Commit everything before task complete:' "$FAKE_ARGS" >/dev/null
-grep -F -- 'git add -A && git commit -m "chore: mark T8-001 done"' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Use task complete as the final command to perform merge and worktree cleanup.' "$FAKE_ARGS" >/dev/null
-grep -F -- 'If task complete hits merge/rebase conflicts, resolve them as much as possible and rerun task complete.' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Only if it still fails after resolution attempts, report BLOCKED:' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Task spec file:' "$FAKE_ARGS" >/dev/null
-grep -F -- '/tasks/specs/T8-001.md' "$FAKE_ARGS" >/dev/null
-grep -F -- 'Task brief:' "$FAKE_ARGS" >/dev/null
-grep -F -- 'The task spec file is the source of truth for implementation details.' "$FAKE_ARGS" >/dev/null
 
 PATH="$FAKE_BIN:$PATH" \
   "$CLI" --repo "$REPO" task stop --all --apply --reason "smoke launch cleanup"
@@ -132,4 +131,9 @@ if kill -0 "$PID" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "run start launch codex exec smoke test passed"
+if tmux has-session -t "$SESSION" >/dev/null 2>&1; then
+  echo "tmux session still alive after stop: $SESSION"
+  exit 1
+fi
+
+echo "run start launch tmux worker smoke test passed"

@@ -90,6 +90,9 @@ def _write_pid(
     task_id: str,
     pid: int,
     worktree: Path,
+    launch_backend: str = "tmux",
+    tmux_session: str = "tmux-session",
+    log_file: str = "/tmp/codex-teams.log",
 ) -> None:
     orch_dir = state_dir / "orchestrator"
     orch_dir.mkdir(parents=True, exist_ok=True)
@@ -101,6 +104,9 @@ def _write_pid(
                 f"task_id={task_id}",
                 f"pid={pid}",
                 f"worktree={worktree}",
+                f"launch_backend={launch_backend}",
+                f"tmux_session={tmux_session}",
+                f"log_file={log_file}",
             ]
         )
         + "\n",
@@ -196,6 +202,41 @@ class EngineReadyTests(unittest.TestCase):
             self.assertIn("Scheduler: ready=1 excluded=0", proc.stdout)
             self.assertIn("Runtime: total=0 active=0 stale=0", proc.stdout)
             self.assertIn("Coordination: locks=0", proc.stdout)
+
+    def test_status_payload_exposes_worker_backend_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _init_git_repo(repo_root)
+
+            _write_todo(
+                repo_root,
+                [
+                    ("T6-001", "running", "AgentA", "-", "", "TODO"),
+                ],
+            )
+            _write_specs(repo_root, ["T6-001"])
+
+            state_dir = repo_root / ".state"
+            _write_lock(state_dir, "app-shell.lock", "AgentA", "app-shell", "T6-001", repo_root)
+            _write_pid(
+                state_dir,
+                "worker.pid",
+                "AgentA",
+                "app-shell",
+                "T6-001",
+                os.getpid(),
+                repo_root,
+                launch_backend="tmux",
+                tmux_session="session-t6",
+                log_file="/tmp/t6.log",
+            )
+
+            payload = _run_engine(repo_root, "status", "--format", "json")
+            worker = payload["runtime"]["workers"][0]
+            self.assertEqual(worker["launch_backend"], "tmux")
+            self.assertEqual(worker["tmux_session"], "session-t6")
+            self.assertEqual(worker["log_file"], "/tmp/t6.log")
 
     def test_ready_excludes_task_when_spec_missing(self) -> None:
         with tempfile.TemporaryDirectory() as td:

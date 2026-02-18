@@ -138,6 +138,8 @@ What you get:
 - runtime state counts and lock snapshots
 - TUI controls: run start (`r`), emergency stop (`e`), tab switch (`1` / `2`)
 - Task tab row action: select a task and press `Enter` to open its spec file
+- Running Agents row action: select (`Enter`) or click to open session overlay
+- Session overlay: read-only live tmux pane capture (legacy non-tmux sessions are shown as unsupported)
 - auto-refresh every 2 seconds
 - automatic fallback to text mode for non-interactive runs (CI/tests)
 
@@ -201,10 +203,12 @@ codex-teams run start [--dry-run] [--no-launch] [--trigger <label>] [--max-start
 
 Runtime behavior:
 
-- default launches detached `codex exec` workers
+- default launches detached tmux-backed `codex exec` workers
 - writes PID metadata to `.state/orchestrator/*.pid`
 - `--no-launch` keeps start-only mode (state/worktree transitions without worker launch)
+- launch mode requires a usable `tmux`; if unavailable, run with `--no-launch`
 - on start/launch failure, scheduler rollback releases owned state/locks and kills spawned background workers
+- when worker process exits, auto-cleanup removes tmux/pid/lock/worktree/branch and rolls task back to `TODO` unless task is already `DONE`
 - launch command adds state dir and primary repo via `--add-dir` so workers can run `task update/complete`
 - if `runtime.codex_flags` does not set sandbox mode, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox`
 - worker prompt requests `$codex-teams` skill guardrails
@@ -287,6 +291,8 @@ bash tests/smoke/test_run_start_lock_cleanup.sh
 bash tests/smoke/test_run_start_requires_task_spec.sh
 bash tests/smoke/test_run_start_after_done.sh
 bash tests/smoke/test_run_start_launch_codex_exec.sh
+bash tests/smoke/test_run_start_tmux_missing_policy.sh
+bash tests/smoke/test_run_start_auto_cleanup_on_exit.sh
 bash tests/smoke/test_run_start_rollback_kills_codex_on_launch_error.sh
 bash tests/smoke/test_run_start_scenario.sh
 bash tests/smoke/test_task_init_gitignore.sh
@@ -294,6 +300,7 @@ bash tests/smoke/test_task_complete_auto_run_start.sh
 bash tests/smoke/test_task_complete_clears_pid_metadata.sh
 bash tests/smoke/test_task_complete_commit_summary_fallback.sh
 bash tests/smoke/test_task_complete_auto_rebase_merge.sh
+bash tests/smoke/test_auto_cleanup_done_guard.sh
 bash tests/smoke/test_status_tui_fallback.sh
 ```
 

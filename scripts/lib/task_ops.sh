@@ -1165,6 +1165,30 @@ rollback_task_to_todo() {
   return 0
 }
 
+task_status_for_id() {
+  local task_id="${1:-}"
+  [[ -n "$task_id" && "$task_id" != "N/A" ]] || return 1
+
+  ensure_todo_template
+
+  awk -F'|' -v task="$task_id" '
+    $0 ~ /^\|/ {
+      id=$2
+      gsub(/^[ \t]+|[ \t]+$/, "", id)
+      if (id == task) {
+        status=$(NF-1)
+        gsub(/^[ \t]+|[ \t]+$/, "", status)
+        print status
+        found=1
+        exit
+      }
+    }
+    END {
+      if (!found) exit 1
+    }
+  ' "$TODO_FILE"
+}
+
 remove_worktree_and_branch() {
   local worktree="${1:-}"
   local owner="${2:-}"
@@ -1177,7 +1201,15 @@ remove_worktree_and_branch() {
     fi
 
     if [[ -d "$worktree" ]]; then
-      if ! git -C "$REPO_ROOT" worktree remove --force "$worktree" >/dev/null 2>&1; then
+      local removed=0
+      for _ in 1 2 3 4 5; do
+        if git -C "$REPO_ROOT" worktree remove --force "$worktree" >/dev/null 2>&1; then
+          removed=1
+          break
+        fi
+        sleep 1
+      done
+      if [[ "$removed" -eq 0 ]]; then
         echo "failed to remove worktree: $worktree"
         return 1
       fi
@@ -1209,6 +1241,7 @@ apply_actions_for_record() {
   local lock_file="${8:-}"
   local worktree="${9:-}"
   local reason="${10:-manual stop}"
+  local skip_done_rollback="${11:-0}"
   local failed=0
 
   local tmux_session=""
@@ -1264,19 +1297,32 @@ apply_actions_for_record() {
     echo "  [SKIP] no lock metadata"
   fi
 
-  local rollback_note
-  if rollback_note="$(rollback_task_to_todo "$task_id" "${owner:-OrchestratorSuite}" "$reason" 2>&1)"; then
-    echo "  [OK] TODO rollback: $rollback_note"
-  else
-    case "$?" in
-      2)
-        echo "  [SKIP][unsupported] TODO rollback: $rollback_note"
-        ;;
-      *)
-        echo "  [ERROR] TODO rollback failed: $rollback_note"
-        failed=1
-        ;;
-    esac
+  local skip_rollback=0
+  if [[ "$skip_done_rollback" == "1" ]]; then
+    local task_status_raw task_status_upper
+    task_status_raw="$(task_status_for_id "$task_id" 2>/dev/null || true)"
+    task_status_upper="$(printf '%s' "$task_status_raw" | tr '[:lower:]' '[:upper:]')"
+    if [[ "$task_status_upper" == "DONE" ]]; then
+      echo "  [SKIP] TODO rollback skipped: task status is DONE"
+      skip_rollback=1
+    fi
+  fi
+
+  if [[ "$skip_rollback" -eq 0 ]]; then
+    local rollback_note
+    if rollback_note="$(rollback_task_to_todo "$task_id" "${owner:-OrchestratorSuite}" "$reason" 2>&1)"; then
+      echo "  [OK] TODO rollback: $rollback_note"
+    else
+      case "$?" in
+        2)
+          echo "  [SKIP][unsupported] TODO rollback: $rollback_note"
+          ;;
+        *)
+          echo "  [ERROR] TODO rollback failed: $rollback_note"
+          failed=1
+          ;;
+      esac
+    fi
   fi
 
   local cleanup_note
@@ -1308,6 +1354,7 @@ run_selected_actions() {
   local action_label="${2:-task-stop}"
   local reason_text="${3:-manual action}"
   local apply="${4:-0}"
+  local skip_done_rollback="${5:-0}"
 
   local normalized_tsv
   normalized_tsv="$("$PYTHON_BIN" - "$selected_tsv" <<'PY'
@@ -1361,7 +1408,7 @@ PY
       continue
     fi
 
-    if apply_actions_for_record "$task_id" "$owner" "$scope" "$state" "$pid" "$pid_alive" "$pid_file" "$lock_file" "$worktree" "$reason_text"; then
+    if apply_actions_for_record "$task_id" "$owner" "$scope" "$state" "$pid" "$pid_alive" "$pid_file" "$lock_file" "$worktree" "$reason_text" "$skip_done_rollback"; then
       success=$((success + 1))
     else
       failed=$((failed + 1))
@@ -1465,6 +1512,73 @@ cmd_task_cleanup_stale() {
   fi
 
   run_selected_actions "$selected_tsv" "task-cleanup-stale" "cleanup stale runtime metadata" "$apply"
+}
+
+cmd_task_auto_cleanup_exit() {
+  load_runtime_context
+
+  local task_id="${1:-}"
+  local expected_pid="${2:-}"
+  shift 2 || true
+
+  local reason="worker exited"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --reason)
+        shift || true
+        [[ $# -gt 0 ]] || die "Missing value for --reason"
+        reason="$1"
+        ;;
+      *)
+        die "Unknown task auto-cleanup-exit option: $1"
+        ;;
+    esac
+    shift || true
+  done
+
+  [[ -n "$task_id" ]] || die "Usage: codex-teams task auto-cleanup-exit <task_id> <expected_pid> [--reason <text>]"
+  [[ "$expected_pid" =~ ^[0-9]+$ ]] || die "task auto-cleanup-exit requires numeric expected_pid"
+
+  local pid_meta
+  pid_meta="$(pid_meta_path_for_task "$task_id" || true)"
+  if [[ -z "$pid_meta" || ! -f "$pid_meta" ]]; then
+    echo "[AUTO-CLEANUP] no pid metadata for task=$task_id"
+    return 0
+  fi
+
+  local current_pid
+  current_pid="$(read_field "$pid_meta" "pid")"
+  if [[ "$current_pid" != "$expected_pid" ]]; then
+    echo "[AUTO-CLEANUP] pid changed for task=$task_id current=${current_pid:-N/A} expected=$expected_pid; skip"
+    return 0
+  fi
+
+  local -a cmd=(select-stop --repo "$REPO_ROOT" --state-dir "$STATE_DIR" --task "$task_id" --format tsv)
+  if [[ -n "${TEAM_CONFIG_ARG:-}" ]]; then
+    cmd+=(--config "$TEAM_CONFIG_ARG")
+  fi
+
+  local selected_tsv
+  selected_tsv="$("$PYTHON_BIN" "$PY_ENGINE" "${cmd[@]}")"
+  if [[ -z "$selected_tsv" ]]; then
+    local owner scope worktree tmux_session lock_file worktree_exists
+    owner="$(read_field "$pid_meta" "owner")"
+    scope="$(read_field "$pid_meta" "scope")"
+    worktree="$(read_field "$pid_meta" "worktree")"
+    tmux_session="$(read_field "$pid_meta" "tmux_session")"
+    lock_file=""
+    if [[ -n "$scope" ]]; then
+      lock_file="$LOCK_DIR/$(normalize_scope "$scope").lock"
+    fi
+    worktree_exists=0
+    if [[ -n "$worktree" && -d "$worktree" ]]; then
+      worktree_exists=1
+    fi
+    selected_tsv="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$task_id" "$task_id" "$owner" "$scope" "FINALIZING_EXITED" "$current_pid" "0" "$pid_meta" "$lock_file" "$worktree" "$tmux_session" "$worktree_exists")"
+  fi
+
+  run_selected_actions "$selected_tsv" "task-auto-cleanup-exit" "$reason" 1 1
 }
 
 cmd_task_emergency_stop() {
@@ -1675,6 +1789,218 @@ ${worktree_path}
 
 ${rendered_rules}
 PROMPT
+}
+
+join_shell_words() {
+  local out="" token quoted
+  for token in "$@"; do
+    quoted="$(printf '%q' "$token")"
+    if [[ -n "$out" ]]; then
+      out+=" "
+    fi
+    out+="$quoted"
+  done
+  printf '%s' "$out"
+}
+
+resolve_launch_backend_value() {
+  local raw="${1:-}"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$raw" in
+    ""|auto|tmux)
+      echo "tmux"
+      ;;
+    codex_exec)
+      echo "codex_exec"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+spawn_exit_cleanup_watcher() {
+  local task_id="${1:-}"
+  local expected_pid="${2:-}"
+  local reason="${3:-worker exited}"
+  [[ -n "$task_id" && "$expected_pid" =~ ^[0-9]+$ ]] || return 1
+
+  local logs_dir task_slug watcher_log cleanup_cmd_str watcher_script watcher_pid
+  logs_dir="$ORCH_DIR/logs"
+  mkdir -p "$logs_dir"
+  task_slug="$(sanitize "$task_id")"
+  [[ -n "$task_slug" ]] || task_slug="task"
+  watcher_log="$logs_dir/watch-${task_slug}-$(date -u +%Y%m%dT%H%M%SZ).log"
+
+  local -a cleanup_cmd=("$TEAM_BIN" --repo "$REPO_ROOT" --state-dir "$STATE_DIR")
+  if [[ -n "${TEAM_CONFIG_ARG:-}" ]]; then
+    cleanup_cmd+=(--config "$TEAM_CONFIG_ARG")
+  fi
+  cleanup_cmd+=(task auto-cleanup-exit "$task_id" "$expected_pid" --reason "$reason")
+  cleanup_cmd_str="$(join_shell_words "${cleanup_cmd[@]}")"
+  watcher_script="while kill -0 ${expected_pid} >/dev/null 2>&1; do sleep 1; done; ${cleanup_cmd_str}"
+
+  watcher_pid="$(spawn_detached_process "$watcher_log" bash -lc "$watcher_script" || true)"
+  [[ "$watcher_pid" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$watcher_pid"
+}
+
+launch_codex_tmux_worker() {
+  local task_id="${1:-}"
+  local task_title="${2:-}"
+  local owner="${3:-}"
+  local scope="${4:-}"
+  local agent="${5:-}"
+  local trigger="${6:-manual}"
+  local worktree_path="${7:-}"
+  local spec_rel_path="${8:-}"
+  local goal_summary="${9:-}"
+  local in_scope_summary="${10:-}"
+  local acceptance_summary="${11:-}"
+
+  [[ -n "$task_id" && -n "$owner" && -n "$scope" && -n "$agent" && -n "$worktree_path" ]] || return 1
+  command -v codex >/dev/null 2>&1 || die "codex command not found. Install Codex CLI or use --no-launch."
+  command -v tmux >/dev/null 2>&1 || die "tmux command not found. Install tmux or use --no-launch."
+
+  local pid_meta logs_dir log_file pid started_at prompt primary_repo session_name task_slug
+  pid_meta="$(pid_meta_path_for_task "$task_id" || true)"
+  [[ -n "$pid_meta" ]] || {
+    echo "[ERROR] Failed to resolve pid metadata path for task=$task_id"
+    return 1
+  }
+
+  logs_dir="$ORCH_DIR/logs"
+  mkdir -p "$logs_dir"
+  log_file="$logs_dir/$(basename "${pid_meta%.pid}")-$(date -u +%Y%m%dT%H%M%SZ).log"
+
+  if [[ -f "$pid_meta" ]]; then
+    local existing_pid
+    existing_pid="$(read_field "$pid_meta" "pid")"
+    if [[ "$existing_pid" =~ ^[0-9]+$ ]] && kill -0 "$existing_pid" >/dev/null 2>&1; then
+      echo "[ERROR] Active pid metadata already exists for task=$task_id pid=$existing_pid file=$pid_meta"
+      return 1
+    fi
+    rm -f "$pid_meta"
+  fi
+
+  local -a codex_flags=()
+  while IFS= read -r token; do
+    [[ -n "$token" ]] || continue
+    codex_flags+=("$token")
+  done < <(split_shell_words "$CODEX_FLAGS")
+
+  local sandbox_configured=0
+  local full_auto_configured=0
+  local flag
+  for flag in "${codex_flags[@]}"; do
+    case "$flag" in
+      --sandbox|-s|--dangerously-bypass-approvals-and-sandbox)
+        sandbox_configured=1
+        ;;
+      --full-auto)
+        full_auto_configured=1
+        ;;
+    esac
+  done
+  if [[ "$sandbox_configured" -eq 0 ]]; then
+    if [[ "$full_auto_configured" -eq 1 ]]; then
+      local -a filtered_flags=()
+      for flag in "${codex_flags[@]}"; do
+        if [[ "$flag" == "--full-auto" ]]; then
+          continue
+        fi
+        filtered_flags+=("$flag")
+      done
+      codex_flags=("${filtered_flags[@]}")
+    fi
+    codex_flags+=(--dangerously-bypass-approvals-and-sandbox)
+  fi
+
+  prompt="$(build_codex_worker_prompt "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary")"
+  primary_repo="$(primary_repo_root_for "$worktree_path" || true)"
+
+  local -a codex_cmd=(codex exec)
+  if [[ "${#codex_flags[@]}" -gt 0 ]]; then
+    codex_cmd+=("${codex_flags[@]}")
+  fi
+  codex_cmd+=(--cd "$worktree_path")
+  codex_cmd+=(--add-dir "$STATE_DIR")
+  if [[ -n "$primary_repo" && "$primary_repo" != "$STATE_DIR" ]]; then
+    codex_cmd+=(--add-dir "$primary_repo")
+  fi
+  codex_cmd+=("$prompt")
+
+  task_slug="$(sanitize "$task_id")"
+  [[ -n "$task_slug" ]] || task_slug="task"
+  session_name="codex-teams-${task_slug}-$(date -u +%Y%m%d%H%M%S)-$$"
+
+  local codex_cmd_str pipe_cmd
+  codex_cmd_str="$(join_shell_words "${codex_cmd[@]}")"
+  if ! tmux new-session -d -s "$session_name" -c "$worktree_path" "$codex_cmd_str"; then
+    echo "[ERROR] Failed to create tmux session: task=$task_id owner=$owner"
+    return 1
+  fi
+
+  pipe_cmd="cat >> $(printf '%q' "$log_file")"
+  if ! tmux pipe-pane -o -t "${session_name}:0.0" "$pipe_cmd" >/dev/null 2>&1; then
+    echo "[ERROR] Failed to attach tmux pipe-pane: task=$task_id owner=$owner session=$session_name"
+    kill_tmux_session_if_any "$session_name" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  pid="$(tmux display-message -p -t "${session_name}:0.0" "#{pane_pid}" 2>/dev/null || true)"
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    pid="$(tmux list-panes -t "$session_name" -F "#{pane_pid}" 2>/dev/null | head -n1 || true)"
+  fi
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] Failed to resolve tmux pane pid: task=$task_id owner=$owner session=$session_name"
+    kill_tmux_session_if_any "$session_name" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  sleep 0.5
+  if ! tmux has-session -t "$session_name" >/dev/null 2>&1; then
+    echo "[ERROR] tmux session exited immediately: task=$task_id owner=$owner log=$log_file"
+    return 1
+  fi
+
+  if [[ -d "$pid_meta" ]]; then
+    echo "[ERROR] Invalid pid metadata path (directory): $pid_meta"
+    kill_tmux_session_if_any "$session_name" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  started_at="$(timestamp_utc)"
+  if ! cat > "$pid_meta" <<PID_META
+pid=$pid
+task_id=$task_id
+owner=$owner
+scope=$scope
+worktree=$worktree_path
+started_at=$started_at
+launch_backend=tmux
+launch_label=N/A
+tmux_session=$session_name
+log_file=$log_file
+trigger=$trigger
+PID_META
+  then
+    echo "[ERROR] Failed to write pid metadata: $pid_meta"
+    kill_tmux_session_if_any "$session_name" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  local watcher_pid watcher_reason
+  watcher_reason="worker exited (backend=tmux)"
+  watcher_pid="$(spawn_exit_cleanup_watcher "$task_id" "$pid" "$watcher_reason" || true)"
+  if [[ ! "$watcher_pid" =~ ^[0-9]+$ ]]; then
+    echo "[ERROR] Failed to launch cleanup watcher: task=$task_id owner=$owner session=$session_name"
+    kill_tmux_session_if_any "$session_name" >/dev/null 2>&1 || true
+    rm -f "$pid_meta" >/dev/null 2>&1 || true
+    return 1
+  fi
+
+  echo "Launched codex worker: task=$task_id owner=$owner pid=$pid session=$session_name watcher=$watcher_pid log=$log_file"
 }
 
 launch_codex_exec_worker() {
@@ -1976,6 +2302,11 @@ cmd_run_start() {
     fi
   fi
 
+  local launch_backend=""
+  if ! launch_backend="$(resolve_launch_backend_value "${LAUNCH_BACKEND:-}")"; then
+    die "Unsupported runtime.launch_backend: ${LAUNCH_BACKEND:-<empty>}"
+  fi
+
   if ! is_primary_worktree "$REPO_ROOT"; then
     if [[ "${AI_ORCH_ALLOW_WORKTREE_RUN:-0}" != "1" ]]; then
       die "run start disabled from worktree. Run from primary repo or set AI_ORCH_ALLOW_WORKTREE_RUN=1"
@@ -1984,6 +2315,10 @@ cmd_run_start() {
 
   if [[ "$dry_run" -eq 0 && "$no_launch" -eq 0 ]]; then
     command -v codex >/dev/null 2>&1 || die "codex command not found. Use --no-launch or install Codex CLI."
+    if [[ "$launch_backend" == "tmux" ]]; then
+      command -v tmux >/dev/null 2>&1 || die "tmux command not found. Install tmux or run with --no-launch."
+      tmux -V >/dev/null 2>&1 || die "tmux command is not usable. Fix tmux or run with --no-launch."
+    fi
   fi
 
   local -a ready_cmd=(ready --repo "$REPO_ROOT" --state-dir "$STATE_DIR" --trigger "$trigger")
@@ -2059,7 +2394,17 @@ cmd_run_start() {
     fi
 
     if [[ "$no_launch" -eq 0 ]]; then
-      if ! launch_codex_exec_worker "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary"; then
+      local launch_ok=0
+      if [[ "$launch_backend" == "tmux" ]]; then
+        if launch_codex_tmux_worker "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary"; then
+          launch_ok=1
+        fi
+      else
+        if launch_codex_exec_worker "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary"; then
+          launch_ok=1
+        fi
+      fi
+      if [[ "$launch_ok" -eq 0 ]]; then
         echo "[ERROR] Failed to launch codex worker: task=$task_id owner=$owner"
         rollback_start_attempt "$task_id" "$owner" "$scope" "$branch_name" "$branch_existed_before" "$worktree_existed_before" "$worktree_path" "codex launch failed"
         continue

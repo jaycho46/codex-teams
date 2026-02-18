@@ -741,6 +741,142 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             if event.button.id == "close":
                 self.dismiss(None)
 
+    class AgentSessionModal(ModalScreen[None]):
+        CSS = """
+        #agent_session_center {
+            width: 1fr;
+            height: 1fr;
+            align: center middle;
+        }
+
+        #agent_session_dialog {
+            width: 100%;
+            max-width: 160;
+            height: 100%;
+            max-height: 70;
+            layout: vertical;
+            padding: 1 1;
+        }
+
+        #agent_session_body {
+            height: 1fr;
+            overflow-y: auto;
+            color: #dce9ff;
+            border: round #d8bf7c;
+            padding: 0 1;
+        }
+
+        #agent_session_footer {
+            margin-top: 1;
+            height: auto;
+            width: 100%;
+            align-vertical: middle;
+        }
+
+        #agent_session_meta {
+            width: 1fr;
+            color: #dce9ff;
+            content-align: left middle;
+        }
+
+        #agent_session_footer Button {
+            margin-left: 1;
+        }
+        """
+
+        BINDINGS = [
+            ("escape", "close_modal", "Close"),
+            ("q", "close_modal", "Close"),
+            ("enter", "close_modal", "Close"),
+        ]
+
+        def __init__(self, worker: dict[str, Any]) -> None:
+            super().__init__()
+            self.worker = worker
+            self.owner = str(worker.get("owner") or "").strip() or "N/A"
+            self.task_id = str(worker.get("task_id") or "").strip() or "N/A"
+            self.pid = str(worker.get("pid") or "").strip() or "N/A"
+            self.launch_backend = str(worker.get("launch_backend") or "").strip().lower()
+            self.tmux_session = str(worker.get("tmux_session") or "").strip()
+            self.log_file = str(worker.get("log_file") or "").strip()
+
+        def compose(self) -> ComposeResult:
+            backend_display = self.launch_backend or "N/A"
+            session_display = self.tmux_session or "N/A"
+            log_display = self.log_file or "N/A"
+            meta_text = (
+                f"Agent: {self.owner}\n"
+                f"Task: {self.task_id}\n"
+                f"PID: {self.pid}\n"
+                f"Backend: {backend_display}\n"
+                f"Session: {session_display}\n"
+                f"Log: {log_display}"
+            )
+            with Container(id="agent_session_center"):
+                with Container(id="agent_session_dialog"):
+                    yield Static(Text("Loading session output..."), id="agent_session_body")
+                    with Horizontal(id="agent_session_footer"):
+                        yield Static(Text(meta_text, style="bold #dce9ff"), id="agent_session_meta")
+                        yield Button("Close (Enter/Esc)", id="close")
+
+        def on_mount(self) -> None:
+            self._refresh_body()
+            self.set_interval(1.0, self._refresh_body)
+
+        def _refresh_body(self) -> None:
+            body_widget = self.query_one("#agent_session_body", Static)
+
+            if self.launch_backend != "tmux" or not self.tmux_session or self.tmux_session == "N/A":
+                body_widget.update(
+                    Text(
+                        "Legacy session is not supported in overlay.\n"
+                        "This worker is not running with tmux backend.",
+                        style="yellow",
+                    )
+                )
+                return
+
+            has_session = subprocess.run(
+                ["tmux", "has-session", "-t", self.tmux_session],
+                capture_output=True,
+                text=True,
+            )
+            if has_session.returncode != 0:
+                body_widget.update(
+                    Text(
+                        f"tmux session is not available: {self.tmux_session}",
+                        style="yellow",
+                    )
+                )
+                return
+
+            capture = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-t", self.tmux_session, "-S", "-300"],
+                capture_output=True,
+                text=True,
+            )
+            if capture.returncode != 0:
+                detail = capture.stderr.strip() or capture.stdout.strip() or "unknown error"
+                body_widget.update(
+                    Text(
+                        f"Failed to capture tmux pane: {detail}",
+                        style="red",
+                    )
+                )
+                return
+
+            content = capture.stdout.rstrip("\n")
+            if not content.strip():
+                content = "(No output yet)"
+            body_widget.update(Text(content))
+
+        def action_close_modal(self) -> None:
+            self.dismiss(None)
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "close":
+                self.dismiss(None)
+
     class StatusTui(App[None]):
         ENABLE_COMMAND_PALETTE = False
         CSS = """
@@ -853,6 +989,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.last_action: str = ""
             self.refresh_in_flight = False
             self.active_bottom_tab = "tasks_tab"
+            self.running_worker_index: dict[tuple[str, str, str], dict[str, Any]] = {}
+            self.agent_modal_open = False
 
         def compose(self) -> ComposeResult:
             with Grid(id="dashboard"):
@@ -1171,6 +1309,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 Text("COMMANDS", style="bold"),
                 Text("  Ctrl+R   Run start"),
                 Text("  Ctrl+E   Emergency stop"),
+                Text("  Enter/Click on Running Agents: Session overlay"),
             ]
             if self.last_error:
                 palette_lines.extend(
@@ -1197,19 +1336,26 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                              ("-", "-", "-", "-"), key_columns=(0,))
 
             agents_table = self.query_one("#agents_table", DataTable)
-            active_agents = [
-                (
-                    str(worker.get("owner", "")),
-                    str(worker.get("task_id", "")),
-                    self._status_cell("IN_PROGRESS"),
-                    str(worker.get("pid", "") or ""),
+            active_agents: list[tuple[Any, ...]] = []
+            worker_index: dict[tuple[str, str, str], dict[str, Any]] = {}
+            for worker in running_workers:
+                owner = str(worker.get("owner", ""))
+                task_id = str(worker.get("task_id", ""))
+                pid = str(worker.get("pid", "") or "")
+                active_agents.append(
+                    (
+                        owner,
+                        task_id,
+                        self._status_cell("IN_PROGRESS"),
+                        pid,
+                    )
                 )
-                for worker in running_workers
-            ]
+                worker_index[(owner, task_id, pid)] = worker
             active_agents.sort(key=lambda row: (
                 row[0], row[1], str(row[2]), row[3]))
+            self.running_worker_index = worker_index
             self._fill_table(agents_table, active_agents,
-                             ("-", "-", "-", "-"), key_columns=(0, 1))
+                             ("-", "-", "-", "-"), key_columns=(0, 1, 3))
 
             task_table = self.query_one("#task_table", DataTable)
             task_rows: list[tuple[Any, ...]] = []
@@ -1261,6 +1407,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             )
             if self.active_bottom_tab == "tasks_tab":
                 subtitle = f"{subtitle} | Enter: open task spec"
+            subtitle = f"{subtitle} | Running Agents Enter/Click: session overlay"
             if self.last_error:
                 subtitle = f"{subtitle} | Last refresh failed"
             self.sub_title = subtitle
@@ -1361,6 +1508,31 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             if not task_id or task_id == "-":
                 return ""
             return task_id
+
+        def _selected_agent_worker(self) -> dict[str, Any] | None:
+            agents_table = self.query_one("#agents_table", DataTable)
+            if not agents_table.is_valid_row_index(agents_table.cursor_row):
+                return None
+            try:
+                row = agents_table.get_row_at(agents_table.cursor_row)
+            except Exception:
+                return None
+            owner = str(row[0] if row else "").strip()
+            task_id = str(row[1] if row else "").strip()
+            pid = str(row[3] if row else "").strip()
+            if not owner or owner == "-" or not task_id or task_id == "-":
+                return None
+            return self.running_worker_index.get((owner, task_id, pid))
+
+        def _open_agent_session(self, worker: dict[str, Any]) -> None:
+            if self.agent_modal_open:
+                return
+
+            def on_close(_: None) -> None:
+                self.agent_modal_open = False
+
+            self.agent_modal_open = True
+            self.push_screen(AgentSessionModal(worker), on_close)
 
         def _open_task_spec(self, task_id: str) -> None:
             repo_root_raw = str(self.current_payload.get("repo_root", "")).strip()
@@ -1515,12 +1687,26 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 self._render_payload()
 
         def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-            if getattr(event.data_table, "id", "") != "task_table":
+            table_id = getattr(event.data_table, "id", "")
+            if table_id == "task_table":
+                task_id = self._selected_task_id()
+                if not task_id:
+                    return
+                self._open_task_spec(task_id)
                 return
-            task_id = self._selected_task_id()
-            if not task_id:
+            if table_id == "agents_table":
+                worker = self._selected_agent_worker()
+                if worker is None:
+                    return
+                self._open_agent_session(worker)
+
+        def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
+            if getattr(event.data_table, "id", "") != "agents_table":
                 return
-            self._open_task_spec(task_id)
+            worker = self._selected_agent_worker()
+            if worker is None:
+                return
+            self._open_agent_session(worker)
 
     StatusTui().run()
 

@@ -21,6 +21,8 @@ smoke_tests=(
   tests/smoke/test_run_start_requires_task_spec.sh
   tests/smoke/test_run_start_after_done.sh
   tests/smoke/test_run_start_launch_codex_exec.sh
+  tests/smoke/test_run_start_tmux_missing_policy.sh
+  tests/smoke/test_run_start_auto_cleanup_on_exit.sh
   tests/smoke/test_run_start_rollback_kills_codex_on_launch_error.sh
   tests/smoke/test_run_start_scenario.sh
   tests/smoke/test_task_new_creates_todo_and_spec.sh
@@ -29,6 +31,7 @@ smoke_tests=(
   tests/smoke/test_task_complete_clears_pid_metadata.sh
   tests/smoke/test_task_complete_commit_summary_fallback.sh
   tests/smoke/test_task_complete_auto_rebase_merge.sh
+  tests/smoke/test_auto_cleanup_done_guard.sh
   tests/smoke/test_status_tui_fallback.sh
 )
 

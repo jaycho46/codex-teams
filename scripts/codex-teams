@@ -57,6 +57,7 @@ dispatch_task() {
     scaffold-specs) cmd_task_scaffold_specs "$@" ;;
     stop) cmd_task_stop "$@" ;;
     cleanup-stale) cmd_task_cleanup_stale "$@" ;;
+    auto-cleanup-exit) cmd_task_auto_cleanup_exit "$@" ;;
     emergency-stop) cmd_task_emergency_stop "$@" ;;
     *) die "Unknown task command: $subcmd" ;;
   esac

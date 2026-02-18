@@ -61,6 +61,8 @@ def load_pid_inventory(orch_dir: str | Path) -> list[dict[str, Any]]:
         pid = read_field(pid_meta, "pid")
         worktree = read_field(pid_meta, "worktree")
         tmux_session = read_field(pid_meta, "tmux_session")
+        launch_backend = read_field(pid_meta, "launch_backend")
+        log_file = read_field(pid_meta, "log_file")
 
         key = task_id if task_id else f"PIDONLY:{pid_meta.stem}"
         rows.append(
@@ -73,6 +75,8 @@ def load_pid_inventory(orch_dir: str | Path) -> list[dict[str, Any]]:
                 "pid_file": str(pid_meta),
                 "worktree": worktree,
                 "tmux_session": tmux_session,
+                "launch_backend": launch_backend,
+                "log_file": log_file,
             }
         )
     return rows
@@ -128,6 +132,8 @@ def classify_records(pid_rows: list[dict[str, Any]], lock_rows: list[dict[str, A
         pid_file = pid_row.get("pid_file", "")
         lock_file = lock_row.get("lock_file", "")
         tmux_session = pid_row.get("tmux_session", "")
+        launch_backend = pid_row.get("launch_backend", "")
+        log_file = pid_row.get("log_file", "")
 
         pid_alive = bool(pid_file) and is_pid_alive(pid)
         worktree_exists = bool(worktree) and Path(worktree).exists()
@@ -167,6 +173,8 @@ def classify_records(pid_rows: list[dict[str, Any]], lock_rows: list[dict[str, A
                 "lock_file": lock_file or None,
                 "worktree": worktree or None,
                 "tmux_session": tmux_session or None,
+                "launch_backend": launch_backend or None,
+                "log_file": log_file or None,
                 "worktree_exists": worktree_exists,
                 "stale": stale,
             }

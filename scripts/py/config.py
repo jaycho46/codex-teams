@@ -32,7 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "runtime": {
         "max_start": 0,
-        "launch_backend": "auto",
+        "launch_backend": "tmux",
         "auto_no_launch": False,
         "codex_flags": "--full-auto -m gpt-5.3-codex -c model_reasoning_effort=\"medium\"",
     },
@@ -158,6 +158,13 @@ def load_config(repo_root: Path, config_path: str | None = None) -> tuple[dict[s
 
     if not isinstance(todo.get("done_keywords"), list) or not todo["done_keywords"]:
         raise ConfigError("todo.done_keywords must be a non-empty list")
+
+    launch_backend = str(merged.get("runtime", {}).get("launch_backend", "")).strip().lower()
+    if launch_backend not in {"auto", "tmux", "codex_exec"}:
+        raise ConfigError(
+            "runtime.launch_backend must be one of: auto, tmux, codex_exec"
+        )
+    merged["runtime"]["launch_backend"] = launch_backend
 
     config_repo_root = _repo_root_from_config_path(cfg_path, repo_root)
     merged["repo"]["worktree_parent"] = _expand_repo_placeholder(
