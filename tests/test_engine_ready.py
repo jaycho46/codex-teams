@@ -115,6 +115,45 @@ def _write_pid(
 
 
 class EngineReadyTests(unittest.TestCase):
+    def test_status_bootstrap_creates_canonical_todo_template(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _init_git_repo(repo_root)
+
+            payload = _run_engine(repo_root, "status", "--format", "json")
+            self.assertIn("task_board", payload)
+
+            todo_text = (repo_root / "TODO.md").read_text(encoding="utf-8")
+            self.assertIn("| ID | Title | Owner | Deps | Notes | Status |", todo_text)
+            self.assertNotIn("| Area | ID | Title | Owner | Deps | Notes | Status |", todo_text)
+
+    def test_status_bootstrap_rewrites_legacy_empty_todo_template(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            repo_root = Path(td) / "repo"
+            repo_root.mkdir(parents=True, exist_ok=True)
+            _init_git_repo(repo_root)
+
+            (repo_root / "TODO.md").write_text(
+                "\n".join(
+                    [
+                        "# TODO Board",
+                        "",
+                        "| Area | ID | Title | Owner | Deps | Notes | Status |",
+                        "|---|---|---|---|---|---|---|",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            payload = _run_engine(repo_root, "status", "--format", "json")
+            self.assertIn("task_board", payload)
+
+            todo_text = (repo_root / "TODO.md").read_text(encoding="utf-8")
+            self.assertIn("| ID | Title | Owner | Deps | Notes | Status |", todo_text)
+            self.assertNotIn("| Area | ID | Title | Owner | Deps | Notes | Status |", todo_text)
+
     def test_ready_selection_excludes_active_owner_busy_and_unready_deps(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo_root = Path(td) / "repo"

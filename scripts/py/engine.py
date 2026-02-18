@@ -78,18 +78,28 @@ def to_env(ctx: dict[str, Any]) -> str:
 
 def ensure_todo_file(todo_path: str | Path) -> Path:
     path = Path(todo_path)
-    if path.exists():
-        return path
+    canonical_template = """# TODO Board
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        """# TODO Board
+| ID | Title | Owner | Deps | Notes | Status |
+|---|---|---|---|---|---|
+"""
+    legacy_empty_template = """# TODO Board
 
 | Area | ID | Title | Owner | Deps | Notes | Status |
 |---|---|---|---|---|---|---|
-""",
-        encoding="utf-8",
-    )
+"""
+
+    if path.exists():
+        current = path.read_text(encoding="utf-8")
+        # Backward compatibility: early dashboard bootstrap created an empty
+        # 7-column placeholder that does not match the scheduler defaults.
+        # Rewrite only when file is still the untouched empty placeholder.
+        if current.strip() == legacy_empty_template.strip():
+            path.write_text(canonical_template, encoding="utf-8")
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(canonical_template, encoding="utf-8")
     return path
 
 
