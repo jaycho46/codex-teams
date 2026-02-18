@@ -589,7 +589,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
         from rich.console import Group
         from rich.text import Text
         from textual.app import App, ComposeResult
-        from textual.containers import ContentSwitcher, Grid, Container, Horizontal
+        from textual.containers import Grid, Container, Horizontal
         from textual.screen import ModalScreen
         from textual.widgets import Button, DataTable, Static, TabbedContent, TabPane
     except ModuleNotFoundError:
@@ -759,7 +759,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             padding: 1 1;
         }
 
-        #agent_session_switcher {
+        #agent_session_body_stack {
             height: 1fr;
         }
 
@@ -770,6 +770,11 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             color: #dce9ff;
             border: round #d8bf7c;
             padding: 0 1;
+        }
+
+        #agent_session_body_raw.hidden,
+        #agent_session_body_markdown.hidden {
+            display: none;
         }
 
         #agent_session_footer {
@@ -830,12 +835,12 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
         def compose(self) -> ComposeResult:
             with Container(id="agent_session_center"):
                 with Container(id="agent_session_dialog"):
-                    with ContentSwitcher(initial="agent_session_body_markdown", id="agent_session_switcher"):
+                    with Container(id="agent_session_body_stack"):
                         if Markdown is not None:
                             yield Markdown("Loading session output...", id="agent_session_body_markdown")
                         else:
                             yield Static(Text("Loading session output..."), id="agent_session_body_markdown")
-                        yield Static(Text("Loading session output..."), id="agent_session_body_raw")
+                        yield Static(Text("Loading session output..."), id="agent_session_body_raw", classes="hidden")
                     with Horizontal(id="agent_session_footer"):
                         yield Static(Text(self._build_meta_text(), style="bold #dce9ff"), id="agent_session_meta")
                         yield Button("Close (Enter/Esc)", id="close")
@@ -847,6 +852,17 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
         def _set_meta(self) -> None:
             meta_widget = self.query_one("#agent_session_meta", Static)
             meta_widget.update(Text(self._build_meta_text(), style="bold #dce9ff"))
+
+        def _apply_view_mode(self) -> None:
+            markdown_widget = self.query_one("#agent_session_body_markdown")
+            raw_widget = self.query_one("#agent_session_body_raw", Static)
+
+            if self.view_mode == "parsed":
+                markdown_widget.remove_class("hidden")
+                raw_widget.add_class("hidden")
+            else:
+                markdown_widget.add_class("hidden")
+                raw_widget.remove_class("hidden")
 
         def _set_message(self, message: str, style: str = "yellow") -> None:
             markdown_message = f"```text\n{message}\n```"
@@ -860,8 +876,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             raw_widget = self.query_one("#agent_session_body_raw", Static)
             raw_widget.update(Text(message, style=style))
 
-            switcher = self.query_one("#agent_session_switcher", ContentSwitcher)
-            switcher.current = "agent_session_body_markdown" if self.view_mode == "parsed" else "agent_session_body_raw"
+            self._apply_view_mode()
 
         def _set_parsed_body(self, markdown_body: str) -> None:
             markdown_widget = self.query_one("#agent_session_body_markdown")
@@ -870,15 +885,13 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             else:
                 markdown_widget.update(Text(markdown_body))
 
-            switcher = self.query_one("#agent_session_switcher", ContentSwitcher)
-            switcher.current = "agent_session_body_markdown"
+            self._apply_view_mode()
 
         def _set_raw_body(self, content: str) -> None:
             raw_widget = self.query_one("#agent_session_body_raw", Static)
             raw_widget.update(Text.from_ansi(content))
 
-            switcher = self.query_one("#agent_session_switcher", ContentSwitcher)
-            switcher.current = "agent_session_body_raw"
+            self._apply_view_mode()
 
         def _refresh_body(self) -> None:
             if self.launch_backend != "tmux" or not self.tmux_session or self.tmux_session == "N/A":
