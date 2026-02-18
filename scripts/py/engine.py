@@ -851,7 +851,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 return
 
             capture = subprocess.run(
-                ["tmux", "capture-pane", "-p", "-t", self.tmux_session, "-S", "-300"],
+                ["tmux", "capture-pane", "-e", "-p", "-t", self.tmux_session, "-S", "-300"],
                 capture_output=True,
                 text=True,
             )
@@ -865,10 +865,10 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 )
                 return
 
-            content = capture.stdout.rstrip("\n")
+            content = capture.stdout.replace("\r", "").rstrip("\n")
             if not content.strip():
                 content = "(No output yet)"
-            body_widget.update(Text(content))
+            body_widget.update(Text.from_ansi(content))
 
         def action_close_modal(self) -> None:
             self.dismiss(None)

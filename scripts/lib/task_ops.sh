@@ -1819,6 +1819,18 @@ resolve_launch_backend_value() {
   esac
 }
 
+has_codex_color_flag() {
+  local flag
+  for flag in "$@"; do
+    case "$flag" in
+      --color|--color=*|--no-color)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
 spawn_exit_cleanup_watcher() {
   local task_id="${1:-}"
   local expected_pid="${2:-}"
@@ -1914,6 +1926,9 @@ launch_codex_tmux_worker() {
       codex_flags=("${filtered_flags[@]}")
     fi
     codex_flags+=(--dangerously-bypass-approvals-and-sandbox)
+  fi
+  if ! has_codex_color_flag "${codex_flags[@]}"; then
+    codex_flags+=(--color always)
   fi
 
   prompt="$(build_codex_worker_prompt "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary")"
@@ -2074,6 +2089,9 @@ launch_codex_exec_worker() {
       codex_flags=("${filtered_flags[@]}")
     fi
     codex_flags+=(--dangerously-bypass-approvals-and-sandbox)
+  fi
+  if ! has_codex_color_flag "${codex_flags[@]}"; then
+    codex_flags+=(--color always)
   fi
 
   prompt="$(build_codex_worker_prompt "$task_id" "$task_title" "$owner" "$scope" "$agent" "$trigger" "$worktree_path" "$spec_rel_path" "$goal_summary" "$in_scope_summary" "$acceptance_summary")"
