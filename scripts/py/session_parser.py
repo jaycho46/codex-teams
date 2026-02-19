@@ -9,6 +9,7 @@ from typing import Any
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 CODE_FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
+SHELL_WRAP_RE = re.compile(r"^(?:/bin/(?:ba|z)sh|bash|zsh)\s+-lc\s+(.+)$")
 MAX_PREVIEW_CHARS = 1200
 
 
@@ -26,6 +27,10 @@ class SessionBlock:
     body: str
     event_type: str = ""
     timestamp: str = ""
+    item_type: str = ""
+    role: str = ""
+    item_id: str = ""
+    item_status: str = ""
 
 
 @dataclass
@@ -96,6 +101,30 @@ def _format_payload(value: Any) -> str:
     except TypeError:
         rendered = str(value)
     return _truncate(strip_ansi(rendered).strip())
+
+
+def _unwrap_shell_command(command: str) -> str:
+    cleaned = _normalize_fragment(command)
+    if not cleaned:
+        return ""
+    match = SHELL_WRAP_RE.match(cleaned)
+    if not match:
+        return cleaned
+
+    payload = match.group(1).strip()
+    if len(payload) >= 2 and payload[0] == payload[-1] and payload[0] in {"'", '"'}:
+        payload = payload[1:-1]
+    return _normalize_fragment(payload) or cleaned
+
+
+def _strip_wrapped_bold(text: str) -> str:
+    cleaned = _normalize_fragment(text)
+    while cleaned.startswith("**") and cleaned.endswith("**") and len(cleaned) > 4:
+        inner = cleaned[2:-2].strip()
+        if not inner:
+            break
+        cleaned = inner
+    return cleaned
 
 
 def _collect_role_text(node: Any, role_filter: str | None, inherited_role: str = "") -> list[str]:
@@ -198,12 +227,87 @@ def _tool_name_from_event(event: dict[str, Any]) -> str:
     )
 
 
+def _normalize_item_type(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
+
+
+def _normalize_item_status(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip().lower()
+
+
+def _extract_text_from_content_part(part: dict[str, Any]) -> str:
+    for key in ("text", "output_text", "input_text", "summary_text", "reasoning", "delta"):
+        value = part.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    payload = part.get("content")
+    if isinstance(payload, str) and payload.strip():
+        return payload
+    if isinstance(payload, (dict, list)):
+        rendered = _format_payload(payload)
+        if rendered:
+            return rendered
+    return ""
+
+
+def _iter_output_items(event: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    item = event.get("item")
+    if isinstance(item, dict):
+        items.append(item)
+
+    response_output = _pick_nested(event, "response", "output")
+    if isinstance(response_output, list):
+        for entry in response_output:
+            if isinstance(entry, dict):
+                items.append(entry)
+
+    output_items = event.get("output")
+    if isinstance(output_items, list):
+        for entry in output_items:
+            if isinstance(entry, dict):
+                items.append(entry)
+
+    return items
+
+
+def _item_id_from_item(item: dict[str, Any]) -> str:
+    return _first_nonempty(
+        item.get("id"),
+        item.get("item_id"),
+        item.get("output_item_id"),
+        item.get("call_id"),
+        item.get("tool_call_id"),
+        _pick_nested(item, "call", "id"),
+        _pick_nested(item, "function", "call_id"),
+    )
+
+
+def _stream_id_from_event(event: dict[str, Any]) -> str:
+    return _first_nonempty(
+        event.get("item_id"),
+        event.get("output_item_id"),
+        event.get("call_id"),
+        event.get("tool_call_id"),
+        _pick_nested(event, "item", "id"),
+        _pick_nested(event, "delta", "id"),
+    )
+
+
 def _split_chat_and_code_blocks(
     text: str,
     chat_kind: str,
     chat_label: str,
     event_type: str,
     timestamp: str,
+    item_type: str = "",
+    role: str = "",
+    item_id: str = "",
 ) -> list[SessionBlock]:
     blocks: list[SessionBlock] = []
     cursor = 0
@@ -218,6 +322,9 @@ def _split_chat_and_code_blocks(
                     body=_truncate(before),
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type=item_type,
+                    role=role,
+                    item_id=item_id,
                 )
             )
 
@@ -234,6 +341,9 @@ def _split_chat_and_code_blocks(
                     body=_truncate(code_body),
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type="code",
+                    role=role,
+                    item_id=item_id,
                 )
             )
         cursor = match.end()
@@ -247,6 +357,9 @@ def _split_chat_and_code_blocks(
                 body=_truncate(tail),
                 event_type=event_type,
                 timestamp=timestamp,
+                item_type=item_type,
+                role=role,
+                item_id=item_id,
             )
         )
 
@@ -260,6 +373,9 @@ def _split_chat_and_code_blocks(
                     body=_truncate(body),
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type=item_type,
+                    role=role,
+                    item_id=item_id,
                 )
             )
 
@@ -276,7 +392,13 @@ def _extract_reasoning_fragments(event: dict[str, Any], event_type: str) -> list
             fragments.append(value)
     if any(token in event_type for token in ("reasoning", "thinking", "thought", "analysis")):
         fragments.extend(_collect_role_text(event, "assistant"))
-    return _normalize_fragments(fragments)
+    normalized = _normalize_fragments(fragments)
+    cleaned: list[str] = []
+    for fragment in normalized:
+        stripped = _strip_wrapped_bold(fragment)
+        if stripped:
+            cleaned.append(stripped)
+    return cleaned
 
 
 def _event_detail(event: dict[str, Any]) -> str:
@@ -298,10 +420,230 @@ def _event_detail(event: dict[str, Any]) -> str:
     return _format_payload(event)
 
 
+def _event_items_to_blocks(event: dict[str, Any], event_type: str, timestamp: str) -> list[SessionBlock]:
+    blocks: list[SessionBlock] = []
+    for item in _iter_output_items(event):
+        item_type = _normalize_item_type(item.get("type"))
+        role = _normalize_item_type(item.get("role"))
+        status = _normalize_item_status(item.get("status"))
+        item_id = _item_id_from_item(item)
+
+        if item_type in {"message", "agent_message", "assistant_message", "user_message"}:
+            message_role = role or "assistant"
+            if item_type == "agent_message":
+                message_role = "user"
+            if item_type == "assistant_message":
+                message_role = "assistant"
+            if item_type == "user_message":
+                message_role = "user"
+            content = item.get("content")
+            message_blocks: list[SessionBlock] = []
+            if isinstance(content, list):
+                for part in content:
+                    if not isinstance(part, dict):
+                        continue
+                    part_type = _normalize_item_type(part.get("type")) or item_type
+                    text = _extract_text_from_content_part(part)
+                    if not text:
+                        continue
+                    chat_kind = "chat_codex" if message_role == "assistant" else "chat_agent"
+                    chat_label = "Codex" if message_role == "assistant" else "Agent"
+                    message_blocks.extend(
+                        _split_chat_and_code_blocks(
+                            text,
+                            chat_kind=chat_kind,
+                            chat_label=chat_label,
+                            event_type=event_type,
+                            timestamp=timestamp,
+                            item_type=part_type,
+                            role=message_role,
+                            item_id=item_id,
+                        )
+                    )
+
+            if not message_blocks:
+                fallback_text = _first_nonempty(
+                    item.get("text"),
+                    item.get("output_text"),
+                    item.get("input_text"),
+                    _pick_nested(item, "message", "text"),
+                )
+                if fallback_text:
+                    chat_kind = "chat_codex" if message_role == "assistant" else "chat_agent"
+                    chat_label = "Codex" if message_role == "assistant" else "Agent"
+                    message_blocks.extend(
+                        _split_chat_and_code_blocks(
+                            fallback_text,
+                            chat_kind=chat_kind,
+                            chat_label=chat_label,
+                            event_type=event_type,
+                            timestamp=timestamp,
+                            item_type=item_type or "message",
+                            role=message_role,
+                            item_id=item_id,
+                        )
+                    )
+
+            blocks.extend(message_blocks)
+            continue
+
+        if item_type in {"reasoning", "analysis", "thinking", "thought"}:
+            reasoning_text = _first_nonempty(
+                item.get("summary"),
+                item.get("reasoning"),
+                item.get("analysis"),
+                item.get("text"),
+                _pick_nested(item, "summary", "text"),
+            )
+            if not reasoning_text:
+                reasoning_text = _event_detail(item)
+            reasoning_text = _strip_wrapped_bold(reasoning_text)
+            if reasoning_text:
+                blocks.append(
+                    SessionBlock(
+                        kind="think",
+                        label="Think",
+                        body=_truncate(reasoning_text),
+                        event_type=event_type,
+                        timestamp=timestamp,
+                        item_type=item_type or "reasoning",
+                        role=role or "assistant",
+                        item_id=item_id,
+                    )
+                )
+            continue
+
+        if item_type in {"command_execution", "command", "shell_command"}:
+            command_value = _first_nonempty(
+                item.get("command"),
+                _pick_nested(item, "input", "command"),
+            )
+            command_value = _unwrap_shell_command(command_value)
+            command_state = status or "in_progress"
+            if command_value or item_id:
+                label = "Command"
+                if command_state in {"failed", "error"}:
+                    exit_code = item.get("exit_code")
+                    if exit_code is not None:
+                        label = f"Command · exit {exit_code}"
+                blocks.append(
+                    SessionBlock(
+                        kind="tool_call",
+                        label=label,
+                        body=_truncate(_normalize_fragment(command_value) or "(command unavailable)"),
+                        event_type=event_type,
+                        timestamp=timestamp,
+                        item_type=item_type,
+                        role="assistant",
+                        item_id=item_id,
+                        item_status=command_state,
+                    )
+                )
+            continue
+
+        if (
+            item_type.endswith("_call")
+            or item_type in {"function_call", "tool_call", "web_search_call", "computer_call", "mcp_call"}
+        ):
+            tool_name = _first_nonempty(
+                item.get("name"),
+                item.get("tool_name"),
+                _pick_nested(item, "call", "name"),
+                _pick_nested(item, "function", "name"),
+            )
+            label = "Tool Call"
+            if tool_name:
+                label = f"{label} · {tool_name}"
+            payload = item.get("arguments")
+            if payload is None:
+                payload = item.get("input")
+            if payload is None:
+                payload = item
+            blocks.append(
+                SessionBlock(
+                    kind="tool_call",
+                    label=label,
+                    body=_format_payload(payload) or "(no payload)",
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    item_type=item_type,
+                    role=role or "assistant",
+                    item_id=item_id,
+                )
+            )
+            continue
+
+        if (
+            item_type.endswith("_output")
+            or item_type in {"function_call_output", "tool_result", "output"}
+        ):
+            label = "Tool Result"
+            tool_name = _first_nonempty(
+                item.get("name"),
+                item.get("tool_name"),
+                _pick_nested(item, "call", "name"),
+                _pick_nested(item, "function", "name"),
+            )
+            if tool_name:
+                label = f"{label} · {tool_name}"
+            payload = item.get("output")
+            if payload is None:
+                payload = item.get("result")
+            if payload is None:
+                payload = item
+            blocks.append(
+                SessionBlock(
+                    kind="tool_result",
+                    label=label,
+                    body=_format_payload(payload) or "(no payload)",
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    item_type=item_type,
+                    role=role or "assistant",
+                    item_id=item_id,
+                )
+            )
+            continue
+
+        if item_type in {"error", "exception"}:
+            blocks.append(
+                SessionBlock(
+                    kind="error",
+                    label="Error",
+                    body=_event_detail(item) or "(unknown error)",
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    item_type=item_type,
+                    role=role,
+                    item_id=item_id,
+                )
+            )
+            continue
+
+        if item_type:
+            blocks.append(
+                SessionBlock(
+                    kind="event",
+                    label=f"Item · {item_type}",
+                    body=_event_detail(item) or "(no detail)",
+                    event_type=event_type,
+                    timestamp=timestamp,
+                    item_type=item_type,
+                    role=role,
+                    item_id=item_id,
+                )
+            )
+
+    return blocks
+
+
 def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
     blocks: list[SessionBlock] = []
     event_type = _event_type(event)
     timestamp = _event_timestamp(event)
+    item_blocks = _event_items_to_blocks(event, event_type, timestamp)
+    if item_blocks:
+        return item_blocks
 
     if any(token in event_type for token in ("reasoning", "thinking", "thought", "analysis")):
         reasoning_fragments = _extract_reasoning_fragments(event, event_type)
@@ -313,6 +655,9 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                     body=fragment,
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type="reasoning",
+                    role="assistant",
+                    item_id=_stream_id_from_event(event),
                 )
             )
         if blocks:
@@ -330,6 +675,9 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                     chat_label="Agent",
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type="message",
+                    role="user",
+                    item_id=_stream_id_from_event(event),
                 )
             )
 
@@ -343,6 +691,9 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                     chat_label="Codex",
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type="output_text",
+                    role="assistant",
+                    item_id=_stream_id_from_event(event),
                 )
             )
 
@@ -383,6 +734,9 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                 body=body or "(no payload)",
                 event_type=event_type,
                 timestamp=timestamp,
+                item_type="tool_result" if kind == "tool_result" else "tool_call",
+                role="assistant",
+                item_id=_stream_id_from_event(event),
             )
         )
 
@@ -395,6 +749,9 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                     body=_truncate(_normalize_fragment(command_value)),
                     event_type=event_type,
                     timestamp=timestamp,
+                    item_type="code",
+                    role="assistant",
+                    item_id=_stream_id_from_event(event),
                 )
             )
         return blocks
@@ -408,6 +765,8 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                 body=body or "(unknown error)",
                 event_type=event_type,
                 timestamp=timestamp,
+                item_type="error",
+                item_id=_stream_id_from_event(event),
             )
         ]
 
@@ -425,6 +784,8 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
                 body=detail or event_type or "status",
                 event_type=event_type,
                 timestamp=timestamp,
+                item_type="status",
+                item_id=_stream_id_from_event(event),
             )
         ]
 
@@ -439,6 +800,8 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
             body=detail or event_type,
             event_type=event_type,
             timestamp=timestamp,
+            item_type="event",
+            item_id=_stream_id_from_event(event),
         )
     ]
 
@@ -449,68 +812,90 @@ def _append_unique(blocks: list[SessionBlock], block: SessionBlock) -> None:
         and block.kind == blocks[-1].kind
         and block.body == blocks[-1].body
         and block.event_type == blocks[-1].event_type
+        and block.item_type == blocks[-1].item_type
+        and block.role == blocks[-1].role
+        and block.item_id == blocks[-1].item_id
+        and block.item_status == blocks[-1].item_status
     ):
         return
     blocks.append(block)
 
 
-def _flush_delta_buffers(blocks: list[SessionBlock], text_delta: str, think_delta: str, timestamp: str) -> tuple[str, str]:
-    flushed_text = _normalize_fragment(text_delta)
-    if flushed_text:
+def _flush_delta_buffers(
+    blocks: list[SessionBlock],
+    text_delta_buffers: dict[str, str],
+    think_delta_buffers: dict[str, str],
+    timestamp: str,
+) -> tuple[dict[str, str], dict[str, str]]:
+    for stream_id, text_delta in text_delta_buffers.items():
+        flushed_text = _normalize_fragment(text_delta)
+        if not flushed_text:
+            continue
+        normalized_id = "" if stream_id == "__default__" else stream_id
         for block in _split_chat_and_code_blocks(
             flushed_text,
             chat_kind="chat_codex",
             chat_label="Codex",
             event_type="response.output_text.delta",
             timestamp=timestamp,
+            item_type="output_text",
+            role="assistant",
+            item_id=normalized_id,
         ):
             _append_unique(blocks, block)
 
-    flushed_think = _normalize_fragment(think_delta)
-    if flushed_think:
+    for stream_id, think_delta in think_delta_buffers.items():
+        flushed_think = _normalize_fragment(think_delta)
+        if not flushed_think:
+            continue
+        normalized_id = "" if stream_id == "__default__" else stream_id
         _append_unique(
             blocks,
             SessionBlock(
                 kind="think",
                 label="Think",
-                body=flushed_think,
+                body=_strip_wrapped_bold(flushed_think),
                 event_type="response.reasoning.delta",
                 timestamp=timestamp,
+                item_type="reasoning",
+                role="assistant",
+                item_id=normalized_id,
             ),
         )
 
-    return "", ""
+    return {}, {}
 
 
 def _render_from_json_events(events: list[dict[str, Any]], max_blocks: int) -> list[SessionBlock]:
     blocks: list[SessionBlock] = []
-    text_delta_buffer = ""
-    think_delta_buffer = ""
+    text_delta_buffers: dict[str, str] = {}
+    think_delta_buffers: dict[str, str] = {}
 
     for event in events:
         event_type = _event_type(event)
         delta = event.get("delta")
+        stream_id = _stream_id_from_event(event) or "__default__"
         if isinstance(delta, str) and ("assistant" in event_type or "output_text" in event_type):
-            text_delta_buffer += delta
+            text_delta_buffers[stream_id] = f"{text_delta_buffers.get(stream_id, '')}{delta}"
             continue
         if isinstance(delta, str) and any(token in event_type for token in ("reasoning", "thinking", "thought", "analysis")):
-            think_delta_buffer += delta
+            think_delta_buffers[stream_id] = f"{think_delta_buffers.get(stream_id, '')}{delta}"
             continue
 
-        text_delta_buffer, think_delta_buffer = _flush_delta_buffers(
+        text_delta_buffers, think_delta_buffers = _flush_delta_buffers(
             blocks,
-            text_delta_buffer,
-            think_delta_buffer,
+            text_delta_buffers,
+            think_delta_buffers,
             timestamp=_event_timestamp(event),
         )
 
         for block in _event_to_blocks(event):
             _append_unique(blocks, block)
 
-    text_delta_buffer, think_delta_buffer = _flush_delta_buffers(
+    text_delta_buffers, think_delta_buffers = _flush_delta_buffers(
         blocks,
-        text_delta_buffer,
-        think_delta_buffer,
+        text_delta_buffers,
+        think_delta_buffers,
         timestamp="",
     )
 
@@ -525,7 +910,16 @@ def _normalize_cli_view_blocks(blocks: list[SessionBlock], max_blocks: int) -> l
         return []
 
     # Keep the high-level conversational surface and hide low-level transport noise.
-    allowed_kinds = {"chat_agent", "chat_codex", "think", "code", "error", "terminal"}
+    allowed_kinds = {
+        "chat_agent",
+        "chat_codex",
+        "think",
+        "code",
+        "tool_call",
+        "tool_result",
+        "error",
+        "terminal",
+    }
     merged: list[SessionBlock] = []
 
     for block in blocks:
@@ -536,9 +930,38 @@ def _normalize_cli_view_blocks(blocks: list[SessionBlock], max_blocks: int) -> l
             continue
 
         if (
+            block.kind == "tool_call"
+            and block.item_type in {"command_execution", "command", "shell_command"}
+            and block.item_id
+        ):
+            updated = False
+            for existing in reversed(merged):
+                if (
+                    existing.kind == "tool_call"
+                    and existing.item_type in {"command_execution", "command", "shell_command"}
+                    and existing.item_id == block.item_id
+                ):
+                    if body and body != "(command unavailable)":
+                        existing.body = _truncate(body)
+                    if block.item_status:
+                        existing.item_status = block.item_status
+                    if block.label:
+                        existing.label = block.label
+                    if block.timestamp:
+                        existing.timestamp = block.timestamp
+                    updated = True
+                    break
+            if updated:
+                continue
+
+        if (
             merged
             and merged[-1].kind == block.kind
             and merged[-1].label == block.label
+            and merged[-1].item_type == block.item_type
+            and merged[-1].role == block.role
+            and (merged[-1].item_id == block.item_id or (not merged[-1].item_id and not block.item_id))
+            and block.kind in {"chat_agent", "chat_codex", "think", "terminal"}
         ):
             merged[-1].body = _truncate(f"{merged[-1].body}\n\n{body}")
             if not merged[-1].timestamp and block.timestamp:
@@ -552,6 +975,10 @@ def _normalize_cli_view_blocks(blocks: list[SessionBlock], max_blocks: int) -> l
                 body=_truncate(body),
                 event_type="",
                 timestamp=block.timestamp,
+                item_type=block.item_type,
+                role=block.role,
+                item_id=block.item_id,
+                item_status=block.item_status,
             )
         )
 
@@ -565,6 +992,10 @@ def _normalize_cli_view_blocks(blocks: list[SessionBlock], max_blocks: int) -> l
                 body=_truncate(_normalize_fragment(tail.body) or "(No output yet)"),
                 event_type="",
                 timestamp=tail.timestamp,
+                item_type=tail.item_type or "terminal",
+                role=tail.role,
+                item_id=tail.item_id,
+                item_status=tail.item_status,
             )
         ]
 
@@ -617,6 +1048,9 @@ def parse_session_structured(raw_capture: str, log_tail: str = "", max_blocks: i
                 label="Terminal",
                 body="(No output yet)",
                 event_type="capture",
+                item_type="terminal",
+                item_id="",
+                item_status="",
             )
         ]
 
@@ -636,6 +1070,10 @@ def _blocks_to_markdown(blocks: list[SessionBlock]) -> str:
         lines.append(f"### {block.label}")
         if block.event_type:
             lines.append(f"`{block.event_type}`")
+        if block.item_type:
+            lines.append(f"`item.type: {block.item_type}`")
+        if block.item_id:
+            lines.append(f"`item.id: {block.item_id}`")
         if block.timestamp:
             lines.append(f"_time: {block.timestamp}_")
         lines.append("")

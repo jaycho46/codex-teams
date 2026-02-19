@@ -48,6 +48,11 @@ class SessionParserTests(unittest.TestCase):
         self.assertIn("chat_codex", kinds)
         self.assertIn("code", kinds)
         self.assertIn("chat_agent", kinds)
+        item_types = {block.item_type for block in parsed.blocks}
+        self.assertIn("reasoning", item_types)
+        self.assertIn("output_text", item_types)
+        self.assertIn("input_text", item_types)
+        self.assertIn("code", item_types)
 
     def test_parse_jsonl_merges_consecutive_chat_blocks_and_hides_event_noise(self) -> None:
         log_tail = "\n".join(
@@ -65,6 +70,73 @@ class SessionParserTests(unittest.TestCase):
         self.assertEqual([b.kind for b in parsed.blocks], ["chat_codex"])
         self.assertIn("Hello world", parsed.blocks[0].body)
         self.assertIn("More", parsed.blocks[0].body)
+        self.assertEqual(parsed.blocks[0].item_type, "output_text")
+
+    def test_parse_jsonl_maps_item_type_for_tool_call_and_result(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"response.output_item.added","item":{"id":"fc_1","type":"function_call","name":"shell","arguments":{"command":"ls -la"}}}',
+                '{"type":"response.output_item.added","item":{"id":"fc_1_out","type":"function_call_output","name":"shell","output":{"stdout":"ok"}}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=8)
+        self.assertEqual(parsed.source, "jsonl")
+        self.assertEqual([b.kind for b in parsed.blocks], ["tool_call", "tool_result"])
+        self.assertEqual(parsed.blocks[0].item_type, "function_call")
+        self.assertEqual(parsed.blocks[1].item_type, "function_call_output")
+        self.assertEqual(parsed.blocks[0].item_id, "fc_1")
+        self.assertEqual(parsed.blocks[1].item_id, "fc_1_out")
+
+    def test_parse_jsonl_does_not_merge_chat_blocks_when_item_id_differs(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"response.output_item.added","item":{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"output_text","text":"first"}]}}',
+                '{"type":"response.output_item.added","item":{"id":"msg_2","type":"message","role":"assistant","content":[{"type":"output_text","text":"second"}]}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=8)
+        self.assertEqual(parsed.source, "jsonl")
+        self.assertEqual([b.kind for b in parsed.blocks], ["chat_codex", "chat_codex"])
+        self.assertEqual(parsed.blocks[0].item_id, "msg_1")
+        self.assertEqual(parsed.blocks[1].item_id, "msg_2")
+        self.assertIn("first", parsed.blocks[0].body)
+        self.assertIn("second", parsed.blocks[1].body)
+
+    def test_parse_jsonl_maps_agent_message_and_command_execution_items(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"작업 시작합니다."}}',
+                '{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc \'rg --files\'","aggregated_output":"","exit_code":null,"status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/zsh -lc \'rg --files\'","aggregated_output":"rg --files\\na.txt\\nb.txt\\n","exit_code":0,"status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        kinds = [block.kind for block in parsed.blocks]
+        self.assertIn("chat_agent", kinds)
+        self.assertIn("tool_call", kinds)
+        self.assertNotIn("tool_result", kinds)
+        self.assertEqual(parsed.blocks[0].item_type, "agent_message")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        call_block = command_blocks[0]
+        self.assertEqual(call_block.body, "rg --files")
+        self.assertEqual(call_block.item_status, "completed")
+
+    def test_parse_jsonl_think_strips_surrounding_bold_markers(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.completed","item":{"id":"r1","type":"reasoning","text":"**Planning next steps**"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=4)
+        self.assertEqual(parsed.source, "jsonl")
+        think_block = next(block for block in parsed.blocks if block.kind == "think")
+        self.assertEqual(think_block.body, "Planning next steps")
 
     def test_parse_transcript_fallback_wraps_clean_text(self) -> None:
         raw_capture = "\x1b[32mRunning step\x1b[0m\r\nNext line\r\n"
