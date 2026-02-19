@@ -12,21 +12,21 @@ This workflow turns TODO rows into executable task specs so workers do not run f
 
 ```bash
 # 1) initialize
-codex-teams init
+codex-tasks init
 
 # 2) create task row + spec template together
-codex-teams task new T2-101 "Billing webhook retry policy"
+codex-tasks task new T2-101 "Billing webhook retry policy"
 
 # optional: set prerequisite task ids
-codex-teams task new T2-102 --deps T2-101 "Billing webhook retry jitter tuning"
+codex-tasks task new T2-102 --deps T2-101 "Billing webhook retry jitter tuning"
 
 # 3) edit generated files in tasks/specs/*.md
 
 # 4) verify scheduler eligibility
-codex-teams run start --dry-run
+codex-tasks run start --dry-run
 
 # 5) run workers
-codex-teams run start
+codex-tasks run start
 ```
 
 ## TODO Row Format
@@ -44,7 +44,7 @@ Use the standard table shape:
 Recommended path:
 
 ```bash
-codex-teams task new T2-101 "Billing webhook retry policy"
+codex-tasks task new T2-101 "Billing webhook retry policy"
 ```
 
 What this does:
@@ -59,25 +59,25 @@ What this does:
 Generate for every `TODO` row:
 
 ```bash
-codex-teams task scaffold-specs
+codex-tasks task scaffold-specs
 ```
 
 Preview without writing:
 
 ```bash
-codex-teams task scaffold-specs --dry-run
+codex-tasks task scaffold-specs --dry-run
 ```
 
 Generate a specific task only:
 
 ```bash
-codex-teams task scaffold-specs --task T2-101
+codex-tasks task scaffold-specs --task T2-101
 ```
 
 Overwrite an existing spec:
 
 ```bash
-codex-teams task scaffold-specs --task T2-101 --force
+codex-tasks task scaffold-specs --task T2-101 --force
 ```
 
 ## Required Spec Sections
@@ -117,15 +117,15 @@ Scheduler readiness now enforces task specs.
 
 Immediate recovery sequence:
 
-1. Run `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>` for new tasks, or `task scaffold-specs` for existing rows.
+1. Run `codex-tasks task new <task_id> [--deps <task_id[,task_id...]>] <summary>` for new tasks, or `task scaffold-specs` for existing rows.
 2. Fill required sections in generated spec files.
-3. Re-run `codex-teams run start --dry-run`.
-4. Confirm exclusion reason is gone, then run `codex-teams run start`.
+3. Re-run `codex-tasks run start --dry-run`.
+4. Confirm exclusion reason is gone, then run `codex-tasks run start`.
 
 ## Troubleshooting
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| `reason=missing_task_spec` | `tasks/specs/<task_id>.md` does not exist | Run `codex-teams task scaffold-specs` and commit the new file |
+| `reason=missing_task_spec` | `tasks/specs/<task_id>.md` does not exist | Run `codex-tasks task scaffold-specs` and commit the new file |
 | `reason=invalid_task_spec` | Missing or empty `Goal`, `In Scope`, or `Acceptance Criteria` | Fill all required sections with non-empty content |
 | Task still excluded after spec update | TODO status/deps/owner rules still block it | Check `owner_busy`, `deps_not_ready`, and active lock/worker reasons |

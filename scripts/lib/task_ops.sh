@@ -240,7 +240,7 @@ maybe_configure_state_gitignore() {
         fi
       else
         echo "State path missing in .gitignore: $entry"
-        echo "Tip: run 'codex-teams init --gitignore yes' to add it automatically."
+        echo "Tip: run 'codex-tasks init --gitignore yes' to add it automatically."
       fi
       ;;
     *)
@@ -436,7 +436,7 @@ cmd_task_new() {
 
   summary="$(trim "${summary_parts[*]:-}")"
 
-  [[ -n "$task_id" && -n "$summary" ]] || die "Usage: codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>"
+  [[ -n "$task_id" && -n "$summary" ]] || die "Usage: codex-tasks task new <task_id> [--deps <task_id[,task_id...]>] <summary>"
   [[ "$task_id" != *"|"* ]] || die "task_id must not contain '|': $task_id"
 
   local default_owner
@@ -577,7 +577,7 @@ cmd_task_lock() {
   local scope
   scope="$(normalize_scope "$scope_raw")"
 
-  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-teams task lock <agent> <scope> [task_id]"
+  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-tasks task lock <agent> <scope> [task_id]"
 
   require_agent_worktree_context
   initialize_task_state
@@ -617,7 +617,7 @@ cmd_task_unlock() {
   local scope
   scope="$(normalize_scope "$scope_raw")"
 
-  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-teams task unlock <agent> <scope>"
+  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-tasks task unlock <agent> <scope>"
 
   require_agent_worktree_context
   initialize_task_state
@@ -641,7 +641,7 @@ cmd_task_heartbeat() {
   local scope
   scope="$(normalize_scope "$scope_raw")"
 
-  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-teams task heartbeat <agent> <scope>"
+  [[ -n "$agent" && -n "$scope" ]] || die "Usage: codex-tasks task heartbeat <agent> <scope>"
 
   require_agent_worktree_context
   initialize_task_state
@@ -669,7 +669,7 @@ cmd_task_update() {
   shift 3 || true
   local summary="${*:-}"
 
-  [[ -n "$agent" && -n "$task_id" && -n "$status" && -n "$summary" ]] || die "Usage: codex-teams task update <agent> <task_id> <status> <summary>"
+  [[ -n "$agent" && -n "$task_id" && -n "$status" && -n "$summary" ]] || die "Usage: codex-tasks task update <agent> <task_id> <status> <summary>"
   is_valid_status "$status" || die "Invalid status: $status"
 
   require_agent_worktree_context
@@ -821,7 +821,7 @@ cmd_task_complete() {
     shift || true
   done
 
-  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]"
+  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-tasks task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]"
   case "$merge_strategy" in
     ff-only|rebase-then-ff) ;;
     *)
@@ -887,7 +887,7 @@ cmd_task_complete() {
   branch_name="$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD)"
   primary_repo="$(primary_repo_root_for "$REPO_ROOT" || true)"
   [[ -n "$primary_repo" ]] || die "Unable to resolve primary repo from worktree: $REPO_ROOT"
-  primary_team_bin="$primary_repo/scripts/codex-teams"
+  primary_team_bin="$primary_repo/scripts/codex-tasks"
   repo_root_phys="$(cd "$REPO_ROOT" && pwd -P)"
   team_bin_phys=""
   if [[ -x "$TEAM_BIN" ]]; then
@@ -901,10 +901,10 @@ cmd_task_complete() {
     scheduler_bin="$primary_team_bin"
   elif [[ -n "$team_bin_phys" && "$team_bin_phys" != "$repo_root_phys/"* ]]; then
     scheduler_bin="$TEAM_BIN"
-  elif command -v codex-teams >/dev/null 2>&1; then
-    scheduler_bin="$(command -v codex-teams)"
+  elif command -v codex-tasks >/dev/null 2>&1; then
+    scheduler_bin="$(command -v codex-tasks)"
   else
-    die "Unable to resolve codex-teams binary for post-complete scheduler run."
+    die "Unable to resolve codex-tasks binary for post-complete scheduler run."
   fi
 
   merge_task_branch_into_primary "$primary_repo" "$branch_name" "$BASE_BRANCH" "$REPO_ROOT" "$merge_strategy"
@@ -940,7 +940,7 @@ cmd_worktree_create() {
   local base_branch="${3:-$BASE_BRANCH}"
   local parent_dir="${4:-$WORKTREE_PARENT_DIR}"
 
-  [[ -n "$agent" && -n "$task_id" ]] || die "Usage: codex-teams worktree create <agent> <task_id> [base_branch] [parent_dir]"
+  [[ -n "$agent" && -n "$task_id" ]] || die "Usage: codex-tasks worktree create <agent> <task_id> [base_branch] [parent_dir]"
 
   local branch_name worktree_path shared_state
   branch_name="$(branch_name_for "$agent" "$task_id")"
@@ -962,7 +962,7 @@ cmd_worktree_start() {
   local parent_dir="${5:-$WORKTREE_PARENT_DIR}"
   local summary="${6:-Starting ${task_id}}"
 
-  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-teams worktree start <agent> <scope> <task_id> [base_branch] [parent_dir] [summary]"
+  [[ -n "$agent" && -n "$scope" && -n "$task_id" ]] || die "Usage: codex-tasks worktree start <agent> <scope> <task_id> [base_branch] [parent_dir] [summary]"
 
   local branch_name worktree_path shared_state scope_key lock_file lock_owner lock_task
   local -a cli_base
@@ -1160,7 +1160,7 @@ rollback_task_to_todo() {
   fi
 
   mv "$tmp_file" "$TODO_FILE"
-  append_update_log "$owner" "$task_id" "TODO" "Stopped by codex-teams: $reason"
+  append_update_log "$owner" "$task_id" "TODO" "Stopped by codex-tasks: $reason"
   echo "updated TODO to TODO"
   return 0
 }
@@ -1536,7 +1536,7 @@ cmd_task_auto_cleanup_exit() {
     shift || true
   done
 
-  [[ -n "$task_id" ]] || die "Usage: codex-teams task auto-cleanup-exit <task_id> <expected_pid> [--reason <text>]"
+  [[ -n "$task_id" ]] || die "Usage: codex-tasks task auto-cleanup-exit <task_id> <expected_pid> [--reason <text>]"
   [[ "$expected_pid" =~ ^[0-9]+$ ]] || die "task auto-cleanup-exit requires numeric expected_pid"
 
   local pid_meta
@@ -1609,7 +1609,7 @@ cmd_task_emergency_stop() {
       die "task emergency-stop requires interactive confirmation. Re-run with --yes to proceed."
     fi
     echo "Action: EMERGENCY STOP"
-    echo "This will execute: codex-teams task stop --all --apply"
+    echo "This will execute: codex-tasks task stop --all --apply"
     echo "Reason: $reason"
     printf "Continue? type 'yes' to proceed: "
     local answer=""
@@ -1665,13 +1665,13 @@ for token in shlex.split(raw):
 PY
 }
 
-resolve_worker_codex_teams_bin() {
+resolve_worker_codex_tasks_bin() {
   local worktree_path="${1:-}"
   local primary_repo primary_team_bin
 
   primary_repo="$(primary_repo_root_for "$worktree_path" || true)"
   if [[ -n "$primary_repo" ]]; then
-    primary_team_bin="$primary_repo/scripts/codex-teams"
+    primary_team_bin="$primary_repo/scripts/codex-tasks"
     if [[ -x "$primary_team_bin" ]]; then
       echo "$primary_team_bin"
       return 0
@@ -1683,8 +1683,8 @@ resolve_worker_codex_teams_bin() {
     return 0
   fi
 
-  if command -v codex-teams >/dev/null 2>&1; then
-    command -v codex-teams
+  if command -v codex-tasks >/dev/null 2>&1; then
+    command -v codex-tasks
     return 0
   fi
 
@@ -1748,14 +1748,14 @@ build_codex_worker_prompt() {
   fi
   [[ -f "$rules_file" ]] || die "Missing codex worker rules file: $rules_file"
 
-  worker_cli_bin="$(resolve_worker_codex_teams_bin "$worktree_path" || true)"
+  worker_cli_bin="$(resolve_worker_codex_tasks_bin "$worktree_path" || true)"
   if [[ -z "$worker_cli_bin" ]]; then
-    worker_cli_bin="codex-teams"
+    worker_cli_bin="codex-tasks"
   fi
   worker_cli_cmd="$(printf '%q' "$worker_cli_bin")"
 
   rendered_rules="$(cat "$rules_file")"
-  rendered_rules="${rendered_rules//__CODEX_TEAMS_CMD__/$worker_cli_cmd}"
+  rendered_rules="${rendered_rules//__CODEX_TASKS_CMD__/$worker_cli_cmd}"
   rendered_rules="${rendered_rules//__WORKTREE_PATH__/$worktree_path}"
   rendered_rules="${rendered_rules//__STATE_DIR__/$STATE_DIR}"
   rendered_rules="${rendered_rules//__AGENT__/$agent}"
@@ -1962,7 +1962,7 @@ launch_codex_tmux_worker() {
 
   task_slug="$(sanitize "$task_id")"
   [[ -n "$task_slug" ]] || task_slug="task"
-  session_name="codex-teams-${task_slug}-$(date -u +%Y%m%d%H%M%S)-$$"
+  session_name="codex-tasks-${task_slug}-$(date -u +%Y%m%d%H%M%S)-$$"
 
   local codex_cmd_str pipe_cmd
   codex_cmd_str="$(join_shell_words "${codex_cmd[@]}")"

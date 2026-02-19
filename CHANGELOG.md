@@ -29,11 +29,11 @@ All notable changes to this project are documented in this file.
 ### Highlights
 
 - Added a task-spec-first workflow for TODO execution.
-  - New command: `codex-teams task scaffold-specs [--task <id>] [--dry-run] [--force]`
+  - New command: `codex-tasks task scaffold-specs [--task <id>] [--dry-run] [--force]`
   - New module: `scripts/py/task_spec.py` for task spec validation and summaries
   - New guide: `docs/task-authoring-with-scaffold-specs.md`
 - Added `task new` automation to create both TODO rows and task spec templates in one flow.
-  - Command: `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>`
+  - Command: `codex-tasks task new <task_id> [--deps <task_id[,task_id...]>] <summary>`
   - Supports dependency registration via `--deps`
 - Improved TUI dashboard and modal UX in `status --tui`.
   - Better dashboard composition and status visualization
@@ -50,7 +50,7 @@ All notable changes to this project are documented in this file.
 ### Documentation and Guidance
 
 - README task workflow updated for task specs and dependency-aware task creation.
-- Curated codex-teams skill guidance updated to enforce spec-complete authoring before scheduling.
+- Curated codex-tasks skill guidance updated to enforce spec-complete authoring before scheduling.
 
 ### Tests
 

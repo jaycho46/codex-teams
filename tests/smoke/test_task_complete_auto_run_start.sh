@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CLI="$ROOT/scripts/codex-teams"
+CLI="$ROOT/scripts/codex-tasks"
 
 TMP_DIR="$(mktemp -d)"
 REPO="$TMP_DIR/repo"
@@ -70,9 +70,9 @@ if [[ ! -d "$WT_A" ]]; then
   echo "missing AgentA worktree: $WT_A"
   exit 1
 fi
-WORKTREE_CLI="$WT_A/scripts/codex-teams"
+WORKTREE_CLI="$WT_A/scripts/codex-tasks"
 if [[ ! -x "$WORKTREE_CLI" ]]; then
-  echo "missing worktree-local codex-teams CLI: $WORKTREE_CLI"
+  echo "missing worktree-local codex-tasks CLI: $WORKTREE_CLI"
   exit 1
 fi
 

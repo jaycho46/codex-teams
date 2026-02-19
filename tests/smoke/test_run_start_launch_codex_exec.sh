@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CLI="$ROOT/scripts/codex-teams"
+CLI="$ROOT/scripts/codex-tasks"
 
 TMP_DIR="$(mktemp -d)"
 REPO="$TMP_DIR/repo"
@@ -122,7 +122,7 @@ if grep -Fx -- "--full-auto" "$FAKE_ARGS" >/dev/null; then
   echo "unexpected --full-auto in launched command"
   exit 1
 fi
-grep -F -- '$codex-teams' "$FAKE_ARGS" >/dev/null
+grep -F -- '$codex-tasks' "$FAKE_ARGS" >/dev/null
 grep -F -- 'Task lifecycle contract: this task was started by run start, and must end via task complete.' "$FAKE_ARGS" >/dev/null
 
 PATH="$FAKE_BIN:$PATH" \

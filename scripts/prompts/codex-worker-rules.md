@@ -1,11 +1,11 @@
 Required guardrail skill:
-- Use $codex-teams.
+- Use $codex-tasks.
 - If the skill is unavailable, follow the fallback rules below exactly.
 
 CLI preflight:
-- Use this command path for all codex-teams commands in this task: __CODEX_TEAMS_CMD__
-- If command execution fails because codex-teams is missing, run:
-  REPO="${CODEX_TEAMS_REPO:-jaycho46/codex-teams}"; curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/install-codex-teams.sh" | bash -s -- --repo "$REPO" --version "${CODEX_TEAMS_VERSION:-latest}" --force
+- Use this command path for all codex-tasks commands in this task: __CODEX_TASKS_CMD__
+- If command execution fails because codex-tasks is missing, run:
+  REPO="${CODEX_TASKS_REPO:-jaycho46/codex-tasks}"; curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/install-codex-tasks.sh" | bash -s -- --repo "$REPO" --version "${CODEX_TASKS_VERSION:-latest}" --force
 - Then rerun the same command.
 
 Execution rules:
@@ -17,9 +17,9 @@ Execution rules:
 - Keep work scoped to the assigned task title and owner scope.
 - Do not manually edit lock/pid metadata files.
 - Report progress with a specific summary:
-  __CODEX_TEAMS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" IN_PROGRESS "progress update"
+  __CODEX_TASKS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" IN_PROGRESS "progress update"
 - After final verification, mark the task DONE with a specific summary:
-  __CODEX_TEAMS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" DONE "what was delivered"
+  __CODEX_TASKS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" DONE "what was delivered"
 - Commit message rules:
   - Deliverable commits: <type>: <summary> (__TASK_ID__) where <type> is one of feat|fix|refactor|docs|test|chore
   - Final DONE marker commit: chore: mark __TASK_ID__ done
@@ -27,7 +27,7 @@ Execution rules:
   git add -A && git commit -m "chore: mark __TASK_ID__ done"
 - Use task complete as the final command to perform merge and worktree cleanup.
 - When complete, finish with a meaningful summary (or omit --summary to use the default completion log text):
-  __CODEX_TEAMS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task complete "__AGENT__" "__SCOPE__" "__TASK_ID__" --summary "what was delivered"
+  __CODEX_TASKS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task complete "__AGENT__" "__SCOPE__" "__TASK_ID__" --summary "what was delivered"
 - If task complete hits merge/rebase conflicts, resolve them as much as possible and rerun task complete.
 - Only if it still fails after resolution attempts, report BLOCKED:
-  __CODEX_TEAMS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" BLOCKED "merge conflict: <reason>"
+  __CODEX_TASKS_CMD__ --repo "__WORKTREE_PATH__" --state-dir "__STATE_DIR__" task update "__AGENT__" "__TASK_ID__" BLOCKED "merge conflict: <reason>"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Tasks"
+  short_description: "Guardrails for codex-tasks task workers"
+  default_prompt: "Use $codex-tasks to execute a codex-tasks task safely. If codex-tasks CLI is missing, run the install-codex-tasks.sh installer first."

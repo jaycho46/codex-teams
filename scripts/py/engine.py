@@ -356,7 +356,7 @@ def _inventory_payload(args: argparse.Namespace) -> dict[str, Any]:
         "repo_root": str(repo_root),
         "state_dir": ctx["state_dir"],
         "scripts": {
-            "codex_teams": str(Path(__file__).resolve().parents[1] / "codex-teams"),
+            "codex_tasks": str(Path(__file__).resolve().parents[1] / "codex-tasks"),
         },
         "workers": records,
         "summary": summarize(records),
@@ -1640,9 +1640,9 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             locks_joined = self._compact_text(
                 ", ".join(lock_labels) if lock_labels else "-")
             logo_lines = [
-                "░█▀▀░█▀█░█▀▄░█▀▀░█░█░░▀█▀░█▀▀░█▀█░█▄█░█▀▀",
-                "░█░░░█░█░█░█░█▀▀░▄▀▄░░░█░░█▀▀░█▀█░█░█░▀▀█",
-                "░▀▀▀░▀▀▀░▀▀░░▀▀▀░▀░▀░░░▀░░▀▀▀░▀░▀░▀░▀░▀▀▀",
+                "█▀▀░█▀█░█▀▄░█▀▀░█░█░░▀█▀░█▀█░█▀▀░█░█░█▀▀",
+                "█░░░█░█░█░█░█▀▀░▄▀   ▄░░░█░░█▀█░▀▀█░█▀▄░▀▀█",
+                "▀▀▀░▀▀▀░▀▀░░▀▀▀░▀░▀░░░▀░░▀░▀░▀▀▀░▀░▀░▀▀▀",
             ]
             render_lines: list[Text] = [
                 Text(line, style="bold") for line in logo_lines]
@@ -1821,7 +1821,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.sub_title = subtitle
 
         def _run_emergency_stop(self) -> None:
-            cmd = self._codex_teams_cmd()
+            cmd = self._codex_tasks_cmd()
             cmd.extend(["task", "emergency-stop", "--yes",
                        "--reason", "requested from status tui"])
 
@@ -1843,8 +1843,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self._render_payload()
             self._refresh_payload()
 
-        def _codex_teams_cmd(self) -> list[str]:
-            cmd = [str(Path(__file__).resolve().parents[1] / "codex-teams")]
+        def _codex_tasks_cmd(self) -> list[str]:
+            cmd = [str(Path(__file__).resolve().parents[1] / "codex-tasks")]
             repo_root = str(self.current_payload.get("repo_root", ""))
             state_dir = str(self.current_payload.get("state_dir", ""))
             if repo_root:
@@ -1856,7 +1856,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             return cmd
 
         def _run_start(self) -> None:
-            cmd = self._codex_teams_cmd()
+            cmd = self._codex_tasks_cmd()
             cmd.extend(["run", "start"])
             proc = subprocess.run(cmd, capture_output=True, text=True)
             if proc.returncode != 0:
@@ -1962,8 +1962,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                     "Expected path:\n"
                     f"- `{spec_path}`\n\n"
                     "Create it with one of:\n"
-                    f"- `codex-teams task new {task_id} \"task summary\"`\n"
-                    f"- `codex-teams task scaffold-specs --task {task_id}`"
+                    f"- `codex-tasks task new {task_id} \"task summary\"`\n"
+                    f"- `codex-tasks task scaffold-specs --task {task_id}`"
                 )
                 self.push_screen(TaskSpecModal(task_id, str(spec_path), message, status="Missing"))
                 return
@@ -1999,7 +1999,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             )
 
         def on_mount(self) -> None:
-            self.title = "codex-teams status"
+            self.title = "codex-tasks status"
             self.sub_title = "Press q to quit | Panel: Task (1=Task, 2=Log)"
             meta = self.query_one("#meta", Horizontal)
             meta.border_title = "Overview"
@@ -2059,7 +2059,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.push_screen(
                 ActionConfirmModal(
                     "This action will run:\n\n"
-                    "codex-teams task stop --all --apply\n\n"
+                    "codex-tasks task stop --all --apply\n\n"
                     "Are you sure you want to proceed?",
                     "Yes (Y)",
                     variant="error",
@@ -2078,7 +2078,7 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             self.push_screen(
                 ActionConfirmModal(
                     "This action will run:\n\n"
-                    "codex-teams run start\n\n"
+                    "codex-tasks run start\n\n"
                     "Are you sure you want to proceed?",
                     "Yes (Y)",
                     variant="primary",
@@ -2205,7 +2205,7 @@ def cmd_select_stale(args: argparse.Namespace) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="codex-teams python engine")
+    parser = argparse.ArgumentParser(description="codex-tasks python engine")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def add_common(p: argparse.ArgumentParser) -> None:

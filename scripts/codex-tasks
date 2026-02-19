@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLI_BIN="$SCRIPT_DIR/codex-tasks"
+PY_ENGINE="$SCRIPT_DIR/py/engine.py"
+
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/git_ops.sh"
+source "$SCRIPT_DIR/lib/task_ops.sh"
+
+TEAM_BIN="$CLI_BIN"
+TEAM_REPO_ARG=""
+TEAM_STATE_DIR_ARG=""
+TEAM_CONFIG_ARG=""
+
+codex_tasks_usage() {
+  cat <<'USAGE'
+Usage:
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] dashboard [--trigger <label>] [--max-start <n>]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] status [--json|--tui] [--trigger <label>] [--max-start <n>]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] init [--gitignore <ask|yes|no>]
+
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task init [--gitignore <ask|yes|no>]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task lock <agent> <scope> [task_id]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task unlock <agent> <scope>
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task heartbeat <agent> <scope>
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task update <agent> <task_id> <status> <summary>
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task new <task_id> [--deps <task_id[,task_id...]>] <summary>
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task scaffold-specs [--task <id>] [--dry-run] [--force]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task cleanup-stale [--apply]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] task emergency-stop [--reason <text>] [--yes]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] emergency-stop [--reason <text>] [--yes]
+
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] worktree create <agent> <task_id> [base_branch] [parent_dir]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] worktree start <agent> <scope> <task_id> [base_branch] [parent_dir] [summary]
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] worktree list
+
+  codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] run start [--dry-run] [--no-launch] [--trigger <label>] [--max-start <n>]
+USAGE
+}
+
+dispatch_task() {
+  local subcmd="${1:-}"
+  shift || true
+  case "$subcmd" in
+    init) cmd_task_init "$@" ;;
+    lock) cmd_task_lock "$@" ;;
+    unlock) cmd_task_unlock "$@" ;;
+    heartbeat) cmd_task_heartbeat "$@" ;;
+    update) cmd_task_update "$@" ;;
+    new) cmd_task_new "$@" ;;
+    complete) cmd_task_complete "$@" ;;
+    scaffold-specs) cmd_task_scaffold_specs "$@" ;;
+    stop) cmd_task_stop "$@" ;;
+    cleanup-stale) cmd_task_cleanup_stale "$@" ;;
+    auto-cleanup-exit) cmd_task_auto_cleanup_exit "$@" ;;
+    emergency-stop) cmd_task_emergency_stop "$@" ;;
+    *) die "Unknown task command: $subcmd" ;;
+  esac
+}
+
+dispatch_worktree() {
+  local subcmd="${1:-}"
+  shift || true
+  case "$subcmd" in
+    create) cmd_worktree_create "$@" ;;
+    start) cmd_worktree_start "$@" ;;
+    list) cmd_worktree_list "$@" ;;
+    *) die "Unknown worktree command: $subcmd" ;;
+  esac
+}
+
+dispatch_run() {
+  local subcmd="${1:-}"
+  shift || true
+  case "$subcmd" in
+    start) cmd_run_start "$@" ;;
+    *) die "Unknown run command: $subcmd" ;;
+  esac
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repo)
+      shift || true
+      [[ $# -gt 0 ]] || die "Missing value for --repo"
+      TEAM_REPO_ARG="$1"
+      ;;
+    --state-dir)
+      shift || true
+      [[ $# -gt 0 ]] || die "Missing value for --state-dir"
+      TEAM_STATE_DIR_ARG="$1"
+      ;;
+    --config)
+      shift || true
+      [[ $# -gt 0 ]] || die "Missing value for --config"
+      TEAM_CONFIG_ARG="$1"
+      ;;
+    -h|--help|help)
+      codex_tasks_usage
+      exit 0
+      ;;
+    status|dashboard|init|task|worktree|run|emergency-stop)
+      break
+      ;;
+    *)
+      die "Unknown option: $1"
+      ;;
+  esac
+  shift || true
+done
+
+domain="${1:-}"
+shift || true
+
+case "$domain" in
+  status) cmd_unified_status "$@" ;;
+  dashboard) cmd_unified_status --tui "$@" ;;
+  init) cmd_task_init "$@" ;;
+  task) dispatch_task "$@" ;;
+  worktree) dispatch_worktree "$@" ;;
+  run) dispatch_run "$@" ;;
+  emergency-stop) cmd_task_emergency_stop "$@" ;;
+  "") cmd_unified_status --tui "$@" ;;
+  *) die "Unknown domain: $domain" ;;
+esac

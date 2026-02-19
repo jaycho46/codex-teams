@@ -1,7 +1,6 @@
-# codex-teams
+# codex-tasks
 
 ![codex-teams_0_1_1](https://github.com/user-attachments/assets/c2f8a3c5-880a-43b3-a363-4b8f76c53e11)
-
 
 <p align="center">
   <img alt="codex skill" src="https://img.shields.io/badge/Codex%20Skill-0f766e?style=for-the-badge">
@@ -13,10 +12,12 @@
 </p>
 
 <p align="center">
-  Orchestrate multi-agent coding on git worktrees with explicit lifecycle and state.
+  <img alt="codex skill" src="https://img.shields.io/badge/Codex%20Skill-Available-0f766e?style=for-the-badge">
+  <img alt="version" src="https://img.shields.io/github/v/release/jaycho46/codex-tasks?style=for-the-badge">
+  <img alt="tests" src="https://img.shields.io/github/actions/workflow/status/jaycho46/codex-tasks/ci.yml?branch=main&style=for-the-badge&label=tests">
 </p>
 
-`codex-teams` is a unified orchestration CLI for teams running parallel coding agents.
+`codex-tasks` is a unified orchestration CLI for teams running parallel coding agents.
 It provides an orchestration layer between worker launch and task completion:
 
 - scheduler-ready task selection from `TODO.md`
@@ -28,8 +29,8 @@ It provides an orchestration layer between worker launch and task completion:
 
 This repo ships an installable Codex skill.
 
-- skill manifest: `skills/.curated/codex-teams/SKILL.md`
-- installer path: `skills/.curated/codex-teams`
+- skill manifest: `skills/.curated/codex-tasks/SKILL.md`
+- installer path: `skills/.curated/codex-tasks`
 
 Install with Codex skill installer:
 
@@ -37,27 +38,27 @@ In Codex, invoke `$skill-installer` with:
 
 ```text
 $skill-installer Install skill from GitHub:
-- repo: jaycho46/codex-teams
-- path: skills/.curated/codex-teams
+- repo: jaycho46/codex-tasks
+- path: skills/.curated/codex-tasks
 ```
 
 After install, restart Codex to pick up the skill.
 
-If `codex-teams` is not on PATH yet, bootstrap it with the canonical installer:
+If `codex-tasks` is not on PATH yet, bootstrap it with the canonical installer:
 
 ```bash
-REPO="${CODEX_TEAMS_REPO:-jaycho46/codex-teams}"; curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/install-codex-teams.sh" | bash -s -- --repo "$REPO" --version "${CODEX_TEAMS_VERSION:-latest}" --force
+REPO="${CODEX_TASKS_REPO:-jaycho46/codex-tasks}"; curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/scripts/install-codex-tasks.sh" | bash -s -- --repo "$REPO" --version "${CODEX_TASKS_VERSION:-latest}" --force
 ```
 
 Use it as the default workflow:
 
-1. In Codex task prompts, include `$codex-teams` to apply guardrails.
-2. For scheduled runs, start tasks with `codex-teams run start`.
-3. Monitor and control execution with `codex-teams` (TUI).
+1. In Codex task prompts, include `$codex-tasks` to apply guardrails.
+2. For scheduled runs, start tasks with `codex-tasks run start`.
+3. Monitor and control execution with `codex-tasks` (TUI).
 
-## Why codex-teams
+## Why codex-tasks
 
-`codex-teams` is opinionated about the full task lifecycle:
+`codex-tasks` is opinionated about the full task lifecycle:
 
 1. Start work from the scheduler (`run start`)
 2. Track ownership and heartbeat with explicit runtime state
@@ -69,18 +70,18 @@ This is designed to reduce common multi-agent failure modes: duplicate starts, o
 
 ```bash
 # 1) Initialize task domain and state hygiene
-codex-teams init
+codex-tasks init
 
 # 2) Create a TODO task + spec template in one command
-codex-teams task new T1-001 "Implement app shell bootstrap"
+codex-tasks task new T1-001 "Implement app shell bootstrap"
 
 # 3) Fill Goal/In Scope/Acceptance Criteria in tasks/specs/T1-001.md
 
 # 4) Start ready tasks from TODO.md
-codex-teams run start
+codex-tasks run start
 
 # 5) Open live dashboard (default command = status --tui)
-codex-teams
+codex-tasks
 ```
 
 Interactive TUI requires:
@@ -94,18 +95,18 @@ python3 -m pip install textual
 Quick install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-teams/main/scripts/install-codex-teams.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jaycho46/codex-tasks/main/scripts/install-codex-tasks.sh | bash
 ```
 
 Default install paths:
 
-- payload: `~/.local/share/codex-teams/<version>/scripts`
-- launcher: `~/.local/bin/codex-teams`
+- payload: `~/.local/share/codex-tasks/<version>/scripts`
+- launcher: `~/.local/bin/codex-tasks`
 
 ## Entry point
 
 ```bash
-codex-teams [--repo <path>] [--state-dir <path>] [--config <path>] <command>
+codex-tasks [--repo <path>] [--state-dir <path>] [--config <path>] <command>
 ```
 
 No command defaults to the interactive dashboard (`status --tui`).
@@ -127,9 +128,9 @@ flowchart LR
 ### Status and dashboard
 
 ```bash
-codex-teams
-codex-teams dashboard [--trigger <label>] [--max-start <n>]
-codex-teams status [--json|--tui] [--trigger <label>] [--max-start <n>]
+codex-tasks
+codex-tasks dashboard [--trigger <label>] [--max-start <n>]
+codex-tasks status [--json|--tui] [--trigger <label>] [--max-start <n>]
 ```
 
 What you get:
@@ -146,19 +147,19 @@ What you get:
 ### Task domain
 
 ```bash
-codex-teams init [--gitignore <ask|yes|no>]
-codex-teams task init [--gitignore <ask|yes|no>]
-codex-teams task lock <agent> <scope> [task_id]
-codex-teams task unlock <agent> <scope>
-codex-teams task heartbeat <agent> <scope>
-codex-teams task update <agent> <task_id> <status> <summary>
-codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>
-codex-teams task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]
-codex-teams task scaffold-specs [--task <id>] [--dry-run] [--force]
-codex-teams task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
-codex-teams task cleanup-stale [--apply]
-codex-teams task emergency-stop [--reason <text>] [--yes]
-codex-teams emergency-stop [--reason <text>] [--yes]
+codex-tasks init [--gitignore <ask|yes|no>]
+codex-tasks task init [--gitignore <ask|yes|no>]
+codex-tasks task lock <agent> <scope> [task_id]
+codex-tasks task unlock <agent> <scope>
+codex-tasks task heartbeat <agent> <scope>
+codex-tasks task update <agent> <task_id> <status> <summary>
+codex-tasks task new <task_id> [--deps <task_id[,task_id...]>] <summary>
+codex-tasks task complete <agent> <scope> <task_id> [--summary <text>] [--trigger <label>] [--no-run-start] [--merge-strategy <ff-only|rebase-then-ff>]
+codex-tasks task scaffold-specs [--task <id>] [--dry-run] [--force]
+codex-tasks task stop (--task <id> | --owner <owner> | --all) [--reason <text>] [--apply]
+codex-tasks task cleanup-stale [--apply]
+codex-tasks task emergency-stop [--reason <text>] [--yes]
+codex-tasks emergency-stop [--reason <text>] [--yes]
 ```
 
 Behavior notes:
@@ -174,9 +175,9 @@ Behavior notes:
 
 Task authoring workflow:
 
-1. Create tasks with `codex-teams task new <task_id> [--deps <task_id[,task_id...]>] <summary>`.
+1. Create tasks with `codex-tasks task new <task_id> [--deps <task_id[,task_id...]>] <summary>`.
 2. Fill `Goal`, `In Scope`, and `Acceptance Criteria` in generated spec files.
-3. Verify scheduler eligibility with `codex-teams run start --dry-run`.
+3. Verify scheduler eligibility with `codex-tasks run start --dry-run`.
 
 Detailed guide: [`docs/task-authoring-with-scaffold-specs.md`](docs/task-authoring-with-scaffold-specs.md)
 
@@ -190,15 +191,15 @@ Commit message contract (task worktree):
 ### Worktree domain
 
 ```bash
-codex-teams worktree create <agent> <task_id> [base_branch] [parent_dir]
-codex-teams worktree start <agent> <scope> <task_id> [base_branch] [parent_dir] [summary]
-codex-teams worktree list
+codex-tasks worktree create <agent> <task_id> [base_branch] [parent_dir]
+codex-tasks worktree start <agent> <scope> <task_id> [base_branch] [parent_dir] [summary]
+codex-tasks worktree list
 ```
 
 ### Scheduler domain
 
 ```bash
-codex-teams run start [--dry-run] [--no-launch] [--trigger <label>] [--max-start <n>]
+codex-tasks run start [--dry-run] [--no-launch] [--trigger <label>] [--max-start <n>]
 ```
 
 Runtime behavior:
@@ -211,7 +212,7 @@ Runtime behavior:
 - when worker process exits, auto-cleanup removes tmux/pid/lock/worktree/branch and rolls task back to `TODO` unless task is already `DONE`
 - launch command adds state dir and primary repo via `--add-dir` so workers can run `task update/complete`
 - if `runtime.codex_flags` does not set sandbox mode, workers replace `--full-auto` with `--dangerously-bypass-approvals-and-sandbox`
-- worker prompt requests `$codex-teams` skill guardrails
+- worker prompt requests `$codex-tasks` skill guardrails
 
 ## Task Specs
 
@@ -227,19 +228,19 @@ Spec helpers:
 
 ```bash
 # Add one new task row and spec in one command
-codex-teams task new T1-001 "Implement app shell bootstrap"
+codex-tasks task new T1-001 "Implement app shell bootstrap"
 
 # Add a task that depends on earlier tasks
-codex-teams task new T1-002 --deps T1-001,T1-000 "Implement domain service"
+codex-tasks task new T1-002 --deps T1-001,T1-000 "Implement domain service"
 
 # Preview files that would be created from TODO tasks
-codex-teams task scaffold-specs --dry-run
+codex-tasks task scaffold-specs --dry-run
 
 # Generate missing task specs for TODO items
-codex-teams task scaffold-specs
+codex-tasks task scaffold-specs
 
 # Generate or overwrite a specific task spec
-codex-teams task scaffold-specs --task T1-001 --force
+codex-tasks task scaffold-specs --task T1-001 --force
 ```
 
 ## Ready task selection
@@ -258,7 +259,7 @@ This blocks duplicate auto-start even when `main` branch still shows `TODO` rows
 
 ## Skill files
 
-- `skills/.curated/codex-teams/SKILL.md`: worker execution guardrails
+- `skills/.curated/codex-tasks/SKILL.md`: worker execution guardrails
 
 ## Bootstrap behavior
 
@@ -274,7 +275,7 @@ Legacy commands intentionally removed:
 - `ops ...`
 - `run status`
 
-Use `codex-teams status` and `codex-teams task ...` instead.
+Use `codex-tasks status` and `codex-tasks task ...` instead.
 
 ## Tests
 

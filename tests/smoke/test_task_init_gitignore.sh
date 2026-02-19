@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CLI="$ROOT/scripts/codex-teams"
+CLI="$ROOT/scripts/codex-tasks"
 
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -46,6 +46,6 @@ git -C "$REPO_ASK" init -q
 OUT_ASK="$("$CLI" --repo "$REPO_ASK" task init)"
 echo "$OUT_ASK"
 echo "$OUT_ASK" | grep -q "State path missing in .gitignore: .state/"
-echo "$OUT_ASK" | grep -q "Tip: run 'codex-teams init --gitignore yes'"
+echo "$OUT_ASK" | grep -q "Tip: run 'codex-tasks init --gitignore yes'"
 
 echo "task init gitignore smoke test passed"

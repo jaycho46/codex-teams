@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-CLI="$ROOT/scripts/codex-teams"
+CLI="$ROOT/scripts/codex-tasks"
 
 TMP_DIR="$(mktemp -d)"
 REPO="$TMP_DIR/repo"
@@ -97,6 +97,6 @@ if git -C "$REPO" rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
 fi
 
 grep -q "| T9-301 | auto cleanup | AgentA | - | watcher cleanup | TODO |" "$REPO/TODO.md"
-grep -q "Stopped by codex-teams: worker exited (backend=tmux)" "$REPO/.state/LATEST_UPDATES.md"
+grep -q "Stopped by codex-tasks: worker exited (backend=tmux)" "$REPO/.state/LATEST_UPDATES.md"
 
 echo "run start auto cleanup on exit smoke test passed"

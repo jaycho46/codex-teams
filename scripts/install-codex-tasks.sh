@@ -1,41 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEFAULT_REPO="jaycho46/codex-teams"
+DEFAULT_REPO="jaycho46/codex-tasks"
 DEFAULT_VERSION="latest"
-DEFAULT_INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/codex-teams"
+DEFAULT_INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/codex-tasks"
 DEFAULT_BIN_DIR="${XDG_BIN_HOME:-$HOME/.local/bin}"
 DEFAULT_VERIFY_CHECKSUM="1"
 DEFAULT_VERIFY_SIGNATURE="0"
 
-REPO="${CODEX_TEAMS_REPO:-$DEFAULT_REPO}"
-VERSION="${CODEX_TEAMS_VERSION:-$DEFAULT_VERSION}"
-INSTALL_ROOT="${CODEX_TEAMS_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
-BIN_DIR="${CODEX_TEAMS_BIN_DIR:-$DEFAULT_BIN_DIR}"
-VERIFY_CHECKSUM="${CODEX_TEAMS_VERIFY_CHECKSUM:-$DEFAULT_VERIFY_CHECKSUM}"
-VERIFY_SIGNATURE="${CODEX_TEAMS_VERIFY_SIGNATURE:-$DEFAULT_VERIFY_SIGNATURE}"
+REPO="${CODEX_TASKS_REPO:-$DEFAULT_REPO}"
+VERSION="${CODEX_TASKS_VERSION:-$DEFAULT_VERSION}"
+INSTALL_ROOT="${CODEX_TASKS_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
+BIN_DIR="${CODEX_TASKS_BIN_DIR:-$DEFAULT_BIN_DIR}"
+VERIFY_CHECKSUM="${CODEX_TASKS_VERIFY_CHECKSUM:-$DEFAULT_VERIFY_CHECKSUM}"
+VERIFY_SIGNATURE="${CODEX_TASKS_VERIFY_SIGNATURE:-$DEFAULT_VERIFY_SIGNATURE}"
 FORCE=0
 
 usage() {
   cat <<'USAGE'
-Install codex-teams from GitHub releases.
+Install codex-tasks from GitHub releases.
 
 Usage:
-  install-codex-teams.sh [--repo <owner/repo>] [--version <vX.Y.Z|latest>] [--install-root <path>] [--bin-dir <path>] [--force] [--skip-checksum] [--verify-signature]
+  install-codex-tasks.sh [--repo <owner/repo>] [--version <vX.Y.Z|latest>] [--install-root <path>] [--bin-dir <path>] [--force] [--skip-checksum] [--verify-signature]
 
 Examples:
-  install-codex-teams.sh
-  install-codex-teams.sh --version v0.1.1
-  install-codex-teams.sh --version v0.1.1 --verify-signature
-  install-codex-teams.sh --repo acme/codex-teams --bin-dir "$HOME/.local/bin"
+  install-codex-tasks.sh
+  install-codex-tasks.sh --version v0.1.1
+  install-codex-tasks.sh --version v0.1.1 --verify-signature
+  install-codex-tasks.sh --repo acme/codex-tasks --bin-dir "$HOME/.local/bin"
 
 Environment overrides:
-  CODEX_TEAMS_REPO
-  CODEX_TEAMS_VERSION
-  CODEX_TEAMS_INSTALL_ROOT
-  CODEX_TEAMS_BIN_DIR
-  CODEX_TEAMS_VERIFY_CHECKSUM (1/0, true/false)
-  CODEX_TEAMS_VERIFY_SIGNATURE (1/0, true/false)
+  CODEX_TASKS_REPO
+  CODEX_TASKS_VERSION
+  CODEX_TASKS_INSTALL_ROOT
+  CODEX_TASKS_BIN_DIR
+  CODEX_TASKS_VERIFY_CHECKSUM (1/0, true/false)
+  CODEX_TASKS_VERIFY_SIGNATURE (1/0, true/false)
 USAGE
 }
 
@@ -160,7 +160,7 @@ write_launcher() {
     echo "#!/usr/bin/env bash"
     echo "set -euo pipefail"
     printf "INSTALL_ROOT=%q\n" "$install_root"
-    echo 'exec "${INSTALL_ROOT}/current/scripts/codex-teams" "$@"'
+    echo 'exec "${INSTALL_ROOT}/current/scripts/codex-tasks" "$@"'
   } > "$launcher"
   chmod +x "$launcher"
 }
@@ -259,7 +259,7 @@ fi
 tar -xzf "$archive_path" -C "$tmp_dir" || die "Failed to extract tarball"
 source_dir="$(find "$tmp_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 [[ -n "$source_dir" ]] || die "Unable to resolve extracted source directory"
-[[ -x "${source_dir}/scripts/codex-teams" ]] || die "Release payload missing scripts/codex-teams"
+[[ -x "${source_dir}/scripts/codex-tasks" ]] || die "Release payload missing scripts/codex-tasks"
 
 mkdir -p "$INSTALL_ROOT"
 rm -rf "${target_dir}.tmp"
@@ -269,7 +269,7 @@ rm -rf "$target_dir"
 mv "${target_dir}.tmp" "$target_dir"
 ln -sfn "$target_dir" "${INSTALL_ROOT}/current"
 
-launcher_path="${BIN_DIR}/codex-teams"
+launcher_path="${BIN_DIR}/codex-tasks"
 write_launcher "$launcher_path" "$INSTALL_ROOT"
 
 log "Installed version: ${VERSION}"
@@ -282,4 +282,4 @@ if [[ ":$PATH:" != *":${BIN_DIR}:"* ]]; then
   log "  export PATH=\"${BIN_DIR}:\$PATH\""
 fi
 
-log "Run: codex-teams --help"
+log "Run: codex-tasks --help"

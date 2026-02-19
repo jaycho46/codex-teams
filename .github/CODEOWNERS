@@ -4,6 +4,6 @@
 # Critical runtime and release surface.
 /scripts/lib/ @jaycho46
 /scripts/py/ @jaycho46
-/scripts/codex-teams @jaycho46
+/scripts/codex-tasks @jaycho46
 /.github/ @jaycho46
 /tests/ @jaycho46

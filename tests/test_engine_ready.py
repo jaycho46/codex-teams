@@ -92,7 +92,7 @@ def _write_pid(
     worktree: Path,
     launch_backend: str = "tmux",
     tmux_session: str = "tmux-session",
-    log_file: str = "/tmp/codex-teams.log",
+    log_file: str = "/tmp/codex-tasks.log",
 ) -> None:
     orch_dir = state_dir / "orchestrator"
     orch_dir.mkdir(parents=True, exist_ok=True)
