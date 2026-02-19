@@ -10,6 +10,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+_SCRIPTS_DIR = Path(__file__).resolve().parents[1]
+
+
+def _read_version() -> str:
+    version_file = _SCRIPTS_DIR / "VERSION"
+    try:
+        return version_file.read_text().strip()
+    except FileNotFoundError:
+        return "dev"
+
 from config import ConfigError, load_config, owner_key, resolve_context
 from session_parser import SessionBlock, SessionView, parse_session_structured, read_tail_text
 from state_model import (
@@ -1640,12 +1650,13 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
             locks_joined = self._compact_text(
                 ", ".join(lock_labels) if lock_labels else "-")
             logo_lines = [
-                "█▀▀░█▀█░█▀▄░█▀▀░█░█░░▀█▀░█▀█░█▀▀░█░█░█▀▀",
-                "█░░░█░█░█░█░█▀▀░▄▀   ▄░░░█░░█▀█░▀▀█░█▀▄░▀▀█",
-                "▀▀▀░▀▀▀░▀▀░░▀▀▀░▀░▀░░░▀░░▀░▀░▀▀▀░▀░▀░▀▀▀",
+                "█▀▀ █▀█ █▀▄ █▀▀ █ █  ▀█▀ █▀█ █▀▀ █ █ █▀▀",
+                "█   █ █ █ █ █▀▀ ▄▀▄   █  █▀█ ▀▀█ █▀▄ ▀▀█",
+                "▀▀▀ ▀▀▀ ▀▀  ▀▀▀ ▀ ▀   ▀  ▀ ▀ ▀▀▀ ▀ ▀ ▀▀▀",
             ]
             render_lines: list[Text] = [
                 Text(line, style="bold") for line in logo_lines]
+            render_lines.append(Text(f"CODEX TASKS v{_read_version()}", style="bold"))
             render_lines.append(Text(""))
             render_lines.append(
                 Text(f"Repo       {self._compact_path(repo_root)}"))

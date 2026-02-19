@@ -236,7 +236,7 @@ tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 archive_path="${tmp_dir}/source.tar.gz"
-tarball_url="https://github.com/${REPO}/archive/refs/tags/${VERSION}.tar.gz"
+tarball_url="$(release_asset_url "$REPO" "$VERSION" "source.tar.gz")"
 download_file "$tarball_url" "$archive_path"
 
 if [[ "$VERIFY_CHECKSUM" -eq 1 ]]; then
@@ -265,6 +265,7 @@ mkdir -p "$INSTALL_ROOT"
 rm -rf "${target_dir}.tmp"
 mkdir -p "${target_dir}.tmp"
 cp -R "${source_dir}/scripts" "${target_dir}.tmp/" || die "Failed to copy scripts payload"
+echo "${VERSION#v}" > "${target_dir}.tmp/scripts/VERSION"
 rm -rf "$target_dir"
 mv "${target_dir}.tmp" "$target_dir"
 ln -sfn "$target_dir" "${INSTALL_ROOT}/current"
