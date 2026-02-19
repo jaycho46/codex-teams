@@ -2,18 +2,200 @@ from __future__ import annotations
 
 import json
 import os
-try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # pragma: no cover
-    try:
-        import tomli as tomllib  # type: ignore
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "TOML parser unavailable. Use Python 3.11+ or install tomli for Python 3.10."
-        ) from exc
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib as _toml  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    try:
+        import tomli as _toml  # type: ignore
+    except ModuleNotFoundError:  # pragma: no cover
+        _toml = None
+
+_INT_RE = re.compile(r"^[+-]?\d+$")
+
+
+class _TomlDecodeError(ValueError):
+    pass
+
+
+def _strip_toml_comment(line: str) -> str:
+    in_single = False
+    in_double = False
+    escaped = False
+
+    for idx, ch in enumerate(line):
+        if in_double:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_double = False
+            continue
+
+        if in_single:
+            if ch == "'":
+                in_single = False
+            continue
+
+        if ch == "#":
+            return line[:idx]
+        if ch == '"':
+            in_double = True
+        elif ch == "'":
+            in_single = True
+
+    return line
+
+
+def _split_toml_list_items(raw: str) -> list[str]:
+    items: list[str] = []
+    token: list[str] = []
+    in_single = False
+    in_double = False
+    escaped = False
+    depth = 0
+
+    for ch in raw:
+        if in_double:
+            token.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_double = False
+            continue
+
+        if in_single:
+            token.append(ch)
+            if ch == "'":
+                in_single = False
+            continue
+
+        if ch == '"':
+            in_double = True
+            token.append(ch)
+            continue
+
+        if ch == "'":
+            in_single = True
+            token.append(ch)
+            continue
+
+        if ch == "[":
+            depth += 1
+            token.append(ch)
+            continue
+
+        if ch == "]":
+            depth = max(0, depth - 1)
+            token.append(ch)
+            continue
+
+        if ch == "," and depth == 0:
+            items.append("".join(token).strip())
+            token = []
+            continue
+
+        token.append(ch)
+
+    tail = "".join(token).strip()
+    if tail:
+        items.append(tail)
+    return items
+
+
+def _parse_toml_value(raw: str) -> Any:
+    value = raw.strip()
+    if not value:
+        raise _TomlDecodeError("empty TOML value")
+
+    if value.startswith('"') and value.endswith('"'):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise _TomlDecodeError(str(exc)) from exc
+
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+
+    lowered = value.lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+
+    if _INT_RE.match(value):
+        return int(value)
+
+    if value.startswith("[") and value.endswith("]"):
+        inner = value[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_toml_value(part) for part in _split_toml_list_items(inner)]
+
+    raise _TomlDecodeError(f"unsupported TOML value: {value}")
+
+
+def _loads_toml_fallback(text: str) -> dict[str, Any]:
+    root: dict[str, Any] = {}
+    current: dict[str, Any] = root
+
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        line = _strip_toml_comment(raw_line).strip()
+        if not line:
+            continue
+
+        if line.startswith("[") and line.endswith("]"):
+            section_name = line[1:-1].strip()
+            if not section_name:
+                raise _TomlDecodeError(f"line {lineno}: empty section header")
+
+            current = root
+            for part in section_name.split("."):
+                key = part.strip()
+                if not key:
+                    raise _TomlDecodeError(f"line {lineno}: invalid section header")
+                node = current.get(key)
+                if node is None:
+                    node = {}
+                    current[key] = node
+                if not isinstance(node, dict):
+                    raise _TomlDecodeError(
+                        f"line {lineno}: section collides with non-table key '{key}'"
+                    )
+                current = node
+            continue
+
+        if "=" not in line:
+            raise _TomlDecodeError(f"line {lineno}: expected key=value")
+
+        key_part, value_part = line.split("=", 1)
+        key = key_part.strip()
+        if not key:
+            raise _TomlDecodeError(f"line {lineno}: missing key before '='")
+
+        current[key] = _parse_toml_value(value_part)
+
+    return root
+
+
+if _toml is not None:  # pragma: no cover - depends on runtime
+    _TOML_DECODE_ERROR = getattr(_toml, "TOMLDecodeError", ValueError)
+
+    def _loads_toml(text: str) -> dict[str, Any]:
+        return _toml.loads(text)
+
+else:
+    _TOML_DECODE_ERROR = _TomlDecodeError
+
+    def _loads_toml(text: str) -> dict[str, Any]:
+        return _loads_toml_fallback(text)
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -137,8 +319,8 @@ def load_config(repo_root: Path, config_path: str | None = None) -> tuple[dict[s
     _bootstrap_config_if_missing(cfg_path)
 
     try:
-        parsed = tomllib.loads(cfg_path.read_text(encoding="utf-8"))
-    except tomllib.TOMLDecodeError as exc:
+        parsed = _loads_toml(cfg_path.read_text(encoding="utf-8"))
+    except _TOML_DECODE_ERROR as exc:
         raise ConfigError(f"invalid TOML in {cfg_path}: {exc}") from exc
 
     if not isinstance(parsed, dict):

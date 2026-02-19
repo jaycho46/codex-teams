@@ -8,10 +8,46 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts" / "py"))
 
-from config import ConfigError, load_config, resolve_context
+from config import ConfigError, _loads_toml_fallback, load_config, resolve_context
 
 
 class ConfigTests(unittest.TestCase):
+    def test_toml_fallback_parser_handles_basic_orchestrator_shape(self) -> None:
+        parsed = _loads_toml_fallback(
+            """
+[repo]
+base_branch = "main"
+todo_file = "TODO.md"
+state_dir = ".state"
+worktree_parent = "../repo-worktrees"
+
+[runtime]
+max_start = 2
+launch_backend = "tmux"
+auto_no_launch = false
+codex_flags = "--full-auto"
+
+[owners]
+AgentA = "app-shell"
+
+[todo]
+id_col = 2
+title_col = 3
+owner_col = 4
+deps_col = 5
+status_col = 7
+gate_regex = "`(G[0-9]+ \\\\([^)]+\\\\))`"
+done_keywords = ["DONE", "완료", "complete"] # inline comment
+""".strip()
+            + "\n"
+        )
+
+        self.assertEqual(parsed["repo"]["base_branch"], "main")
+        self.assertEqual(parsed["runtime"]["max_start"], 2)
+        self.assertFalse(parsed["runtime"]["auto_no_launch"])
+        self.assertEqual(parsed["owners"]["AgentA"], "app-shell")
+        self.assertEqual(parsed["todo"]["done_keywords"][1], "완료")
+
     def test_load_config_bootstraps_and_expands_repo_placeholder(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             repo_root = Path(td) / "sample-repo"

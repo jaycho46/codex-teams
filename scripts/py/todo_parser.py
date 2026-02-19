@@ -16,6 +16,39 @@ def _field(cols: list[str], col_no: int) -> str:
     return cols[idx].strip()
 
 
+def _parse_markdown_row(line: str) -> list[str] | None:
+    text = line.strip()
+    if not text.startswith("|") or not text.endswith("|"):
+        return None
+
+    cells: list[str] = []
+    buf: list[str] = []
+    escaped = False
+    for ch in text[1:-1]:
+        if escaped:
+            if ch == "|":
+                buf.append("|")
+            else:
+                buf.append("\\")
+                buf.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "|":
+            cells.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+
+    if escaped:
+        buf.append("\\")
+    cells.append("".join(buf).strip())
+    # Preserve split("|") indexing used by schema column numbers.
+    return ["", *cells, ""]
+
+
 def parse_todo(todo_file: str | Path, schema: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, str]]:
     path = Path(todo_file)
     if not path.exists():
@@ -31,9 +64,9 @@ def parse_todo(todo_file: str | Path, schema: dict[str, Any]) -> tuple[list[dict
     status_col = int(schema["status_col"])
 
     for line in lines:
-        if not line.startswith("|"):
+        cols = _parse_markdown_row(line)
+        if cols is None:
             continue
-        cols = [c.strip() for c in line.split("|")]
 
         task_id = _field(cols, id_col)
         title = _field(cols, title_col)

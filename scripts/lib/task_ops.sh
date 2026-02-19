@@ -104,6 +104,116 @@ ensure_todo_template() {
 TODO_TEMPLATE
 }
 
+todo_status_by_schema() {
+  local mode="${1:-}"
+  local task_id="${2:-}"
+  local status="${3:-}"
+
+  "$PYTHON_BIN" - "$TODO_FILE" "$TODO_SCHEMA_JSON" "$mode" "$task_id" "$status" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+todo_file = Path(sys.argv[1])
+schema = json.loads(sys.argv[2])
+mode = sys.argv[3]
+task_id = (sys.argv[4] or "").strip()
+status_value = (sys.argv[5] or "").strip()
+
+
+def parse_markdown_row(line: str) -> list[str] | None:
+    text = line.strip()
+    if not text.startswith("|") or not text.endswith("|"):
+        return None
+
+    cells: list[str] = []
+    buf: list[str] = []
+    escaped = False
+    for ch in text[1:-1]:
+        if escaped:
+            if ch == "|":
+                buf.append("|")
+            else:
+                buf.append("\\")
+                buf.append(ch)
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == "|":
+            cells.append("".join(buf).strip())
+            buf = []
+            continue
+        buf.append(ch)
+    if escaped:
+        buf.append("\\")
+    cells.append("".join(buf).strip())
+    return cells
+
+
+def serialize_markdown_row(cells: list[str]) -> str:
+    escaped_cells = [str(cell).strip().replace("|", "\\|") for cell in cells]
+    return "| " + " | ".join(escaped_cells) + " |"
+
+
+def col_to_cell_index(col_no: int) -> int:
+    # Column numbers follow split('|') semantics with leading/trailing empty cells.
+    return col_no - 2
+
+
+def cell_at(cells: list[str], col_no: int) -> str:
+    idx = col_to_cell_index(col_no)
+    if idx < 0 or idx >= len(cells):
+        return ""
+    return cells[idx].strip()
+
+
+def set_cell(cells: list[str], col_no: int, value: str) -> None:
+    idx = col_to_cell_index(col_no)
+    if idx < 0:
+        raise ValueError(f"invalid column index: {col_no}")
+    if idx >= len(cells):
+        cells.extend([""] * (idx + 1 - len(cells)))
+    cells[idx] = value
+
+
+if mode not in {"get", "set"}:
+    print(f"unsupported mode: {mode}", file=sys.stderr)
+    raise SystemExit(3)
+if not task_id:
+    print("task id missing", file=sys.stderr)
+    raise SystemExit(3)
+
+id_col = int(schema["id_col"])
+status_col = int(schema["status_col"])
+
+lines = todo_file.read_text(encoding="utf-8").splitlines()
+for idx, line in enumerate(lines):
+    cells = parse_markdown_row(line)
+    if cells is None:
+        continue
+
+    candidate_id = cell_at(cells, id_col)
+    if not candidate_id or candidate_id == "ID" or set(candidate_id) == {"-"}:
+        continue
+    if candidate_id != task_id:
+        continue
+
+    if mode == "get":
+        print(cell_at(cells, status_col))
+        raise SystemExit(0)
+
+    set_cell(cells, status_col, status_value)
+    lines[idx] = serialize_markdown_row(cells)
+    todo_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    raise SystemExit(0)
+
+print("task not found in TODO board", file=sys.stderr)
+raise SystemExit(2)
+PY
+}
+
 update_todo_status() {
   local task_id="${1:-}"
   local status="${2:-}"
@@ -114,30 +224,17 @@ update_todo_status() {
 
   ensure_todo_template
 
-  local tmp_file
-  tmp_file="$(mktemp)"
-  if ! awk -F'|' -v task="$task_id" -v st="$status" '
-    BEGIN { OFS="|"; found=0 }
-    {
-      if ($0 ~ /^\|/) {
-        id=$2
-        gsub(/^[ \t]+|[ \t]+$/, "", id)
-        if (id == task) {
-          $(NF-1) = " " st " "
-          found=1
-        }
-      }
-      print
-    }
-    END {
-      if (!found) exit 42
-    }
-  ' "$TODO_FILE" > "$tmp_file"; then
-    rm -f "$tmp_file"
-    die "Task not found in TODO board: $task_id"
+  local mutate_note
+  if ! mutate_note="$(todo_status_by_schema set "$task_id" "$status" 2>&1)"; then
+    case "$?" in
+      2)
+        die "Task not found in TODO board: $task_id"
+        ;;
+      *)
+        die "${mutate_note:-Failed to update TODO status for task=$task_id}"
+        ;;
+    esac
   fi
-
-  mv "$tmp_file" "$TODO_FILE"
 }
 
 initialize_task_state() {
@@ -146,9 +243,36 @@ initialize_task_state() {
   ensure_todo_template
 }
 
+canonical_path_if_exists() {
+  local path="${1:-}"
+  [[ -n "$path" ]] || {
+    echo ""
+    return 0
+  }
+
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+    return 0
+  fi
+
+  if [[ -e "$path" ]]; then
+    local parent
+    parent="$(dirname "$path")"
+    local name
+    name="$(basename "$path")"
+    (cd "$parent" && printf '%s/%s\n' "$(pwd -P)" "$name")
+    return 0
+  fi
+
+  echo "$path"
+}
+
 state_dir_gitignore_entry() {
-  local root="${REPO_ROOT%/}"
-  local state="${STATE_DIR%/}"
+  local root state
+  root="$(canonical_path_if_exists "$REPO_ROOT")"
+  state="$(canonical_path_if_exists "$STATE_DIR")"
+  root="${root%/}"
+  state="${state%/}"
 
   if [[ "$state" == "$root" ]]; then
     echo ""
@@ -854,18 +978,7 @@ cmd_task_complete() {
     done <<< "$tracked_changes"
   fi
 
-  task_status="$(awk -F'|' -v task="$task_id" '
-    $0 ~ /^\|/ {
-      id=$2
-      gsub(/^[ \t]+|[ \t]+$/, "", id)
-      if (id == task) {
-        status=$(NF-1)
-        gsub(/^[ \t]+|[ \t]+$/, "", status)
-        print status
-        exit
-      }
-    }
-  ' "$TODO_FILE")"
+  task_status="$(task_status_for_id "$task_id" || true)"
   [[ -n "$task_status" ]] || die "Task not found in TODO board: $task_id"
   case "$task_status" in
     DONE|완료|Complete|complete) ;;
@@ -1135,31 +1248,20 @@ rollback_task_to_todo() {
 
   ensure_todo_template
 
-  local tmp_file
-  tmp_file="$(mktemp)"
-  if ! awk -F'|' -v task="$task_id" -v st="TODO" '
-    BEGIN { OFS="|"; found=0 }
-    {
-      if ($0 ~ /^\|/) {
-        id=$2
-        gsub(/^[ \t]+|[ \t]+$/, "", id)
-        if (id == task) {
-          $(NF-1) = " " st " "
-          found=1
-        }
-      }
-      print
-    }
-    END {
-      if (!found) exit 42
-    }
-  ' "$TODO_FILE" > "$tmp_file"; then
-    rm -f "$tmp_file"
-    echo "task not found in TODO board"
-    return 2
+  local rollback_note
+  if ! rollback_note="$(todo_status_by_schema set "$task_id" "TODO" 2>&1)"; then
+    case "$?" in
+      2)
+        echo "task not found in TODO board"
+        return 2
+        ;;
+      *)
+        [[ -n "$rollback_note" ]] && echo "$rollback_note"
+        return 1
+        ;;
+    esac
   fi
 
-  mv "$tmp_file" "$TODO_FILE"
   append_update_log "$owner" "$task_id" "TODO" "Stopped by codex-tasks: $reason"
   echo "updated TODO to TODO"
   return 0
@@ -1171,22 +1273,7 @@ task_status_for_id() {
 
   ensure_todo_template
 
-  awk -F'|' -v task="$task_id" '
-    $0 ~ /^\|/ {
-      id=$2
-      gsub(/^[ \t]+|[ \t]+$/, "", id)
-      if (id == task) {
-        status=$(NF-1)
-        gsub(/^[ \t]+|[ \t]+$/, "", status)
-        print status
-        found=1
-        exit
-      }
-    }
-    END {
-      if (!found) exit 1
-    }
-  ' "$TODO_FILE"
+  todo_status_by_schema get "$task_id" 2>/dev/null
 }
 
 remove_worktree_and_branch() {
@@ -2354,6 +2441,13 @@ cmd_run_start() {
     fi
   fi
 
+  local run_lock_dir="$ORCH_DIR/run.lock"
+  if ! acquire_scheduler_lock "$run_lock_dir"; then
+    return
+  fi
+
+  trap "rm -f '$run_lock_dir/pid' >/dev/null 2>&1 || true; rmdir '$run_lock_dir' >/dev/null 2>&1 || true" EXIT
+
   local -a ready_cmd=(ready --repo "$REPO_ROOT" --state-dir "$STATE_DIR" --trigger "$trigger")
   if [[ -n "${TEAM_CONFIG_ARG:-}" ]]; then
     ready_cmd+=(--config "$TEAM_CONFIG_ARG")
@@ -2368,13 +2462,6 @@ cmd_run_start() {
 
   local ready_tsv
   ready_tsv="$("$PYTHON_BIN" "$PY_ENGINE" "${ready_cmd[@]}" --format tsv)"
-
-  local run_lock_dir="$ORCH_DIR/run.lock"
-  if ! acquire_scheduler_lock "$run_lock_dir"; then
-    return
-  fi
-
-  trap "rm -f '$run_lock_dir/pid' >/dev/null 2>&1 || true; rmdir '$run_lock_dir' >/dev/null 2>&1 || true" EXIT
 
   local started_count=0
   while IFS=$'\t' read -r task_id task_title owner scope deps status spec_rel_path goal_summary in_scope_summary acceptance_summary; do

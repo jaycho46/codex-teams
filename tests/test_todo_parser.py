@@ -59,6 +59,29 @@ Gate state: `G2 (PENDING)`
             with self.assertRaises(TodoError):
                 parse_todo(missing, SCHEMA)
 
+    def test_parse_todo_supports_escaped_pipe_cells(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            todo_path = Path(td) / "TODO.md"
+            todo_path.write_text(
+                """
+# TODO Board
+
+| ID | Title | Owner | Deps | Notes | Status |
+|---|---|---|---|---|---|
+| T2-001 | Title with \\| pipe | AgentA | - | note with \\| pipe | TODO |
+""".strip()
+                + "\n",
+                encoding="utf-8",
+            )
+
+            tasks, _ = parse_todo(todo_path, SCHEMA)
+            self.assertEqual(len(tasks), 1)
+            self.assertEqual(tasks[0]["id"], "T2-001")
+            self.assertEqual(tasks[0]["title"], "Title with | pipe")
+            self.assertEqual(tasks[0]["owner"], "AgentA")
+            self.assertEqual(tasks[0]["deps"], "-")
+            self.assertEqual(tasks[0]["status"], "TODO")
+
 
 if __name__ == "__main__":
     unittest.main()
