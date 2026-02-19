@@ -1715,9 +1715,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
 
             palette_lines: list[Text] = [
                 Text("COMMANDS", style="bold"),
-                Text("  Ctrl+R   Run start"),
-                Text("  Ctrl+E   Emergency stop"),
-                Text("  Enter/Click on Running Agents: Session overlay (Tab: Raw/Structured)"),
+                Text("  Ctrl+R   Run ready tasks"),
+                Text("  Ctrl+E   Stop all tasks"),
             ]
             if self.last_error:
                 palette_lines.extend(
