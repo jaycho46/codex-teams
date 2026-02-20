@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,38 @@ ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 CODE_FENCE_RE = re.compile(r"```([^\n`]*)\n(.*?)```", re.DOTALL)
 SHELL_WRAP_RE = re.compile(r"^(?:/bin/(?:ba|z)sh|bash|zsh)\s+-lc\s+(.+)$")
 MAX_PREVIEW_CHARS = 1200
+SHELL_DELIMITER_TOKENS = {"|", "||", "&&", ";"}
+RG_OPTIONS_WITH_VALUE = {
+    "-A",
+    "-B",
+    "-C",
+    "-f",
+    "-g",
+    "-j",
+    "-M",
+    "-m",
+    "-T",
+    "-t",
+    "--context",
+    "--engine",
+    "--glob",
+    "--ignore-file",
+    "--iglob",
+    "--max-columns",
+    "--max-count",
+    "--max-filesize",
+    "--path-separator",
+    "--pre",
+    "--pre-glob",
+    "--regexp",
+    "--replace",
+    "--sort",
+    "--sortr",
+    "--threads",
+    "--type",
+    "--type-add",
+    "--type-not",
+}
 
 
 @dataclass
@@ -115,6 +148,227 @@ def _unwrap_shell_command(command: str) -> str:
     if len(payload) >= 2 and payload[0] == payload[-1] and payload[0] in {"'", '"'}:
         payload = payload[1:-1]
     return _normalize_fragment(payload) or cleaned
+
+
+def _command_segments(command: str) -> list[list[str]]:
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return []
+    if not tokens:
+        return []
+
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in SHELL_DELIMITER_TOKENS:
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _extract_sed_file_target(segment: list[str]) -> str:
+    if not segment or segment[0] != "sed":
+        return ""
+    try:
+        n_index = segment.index("-n")
+    except ValueError:
+        return ""
+
+    file_index = n_index + 2
+    if file_index >= len(segment):
+        return ""
+    candidate = segment[file_index].strip()
+    if not candidate or candidate.startswith("-"):
+        return ""
+    return candidate
+
+
+def _extract_nl_file_target(segment: list[str]) -> str:
+    if not segment or segment[0] != "nl":
+        return ""
+    for token in reversed(segment[1:]):
+        cleaned = token.strip()
+        if not cleaned or cleaned.startswith("-"):
+            continue
+        return cleaned
+    return ""
+
+
+def _extract_redirect_target(segment: list[str]) -> str:
+    ignored_targets = {"/dev/null", "/dev/stderr", "/dev/stdout"}
+    for index, token in enumerate(segment):
+        cleaned = token.strip()
+        if not cleaned:
+            continue
+        if re.fullmatch(r"\d*>>?", cleaned):
+            if index + 1 >= len(segment):
+                return ""
+            candidate = segment[index + 1].strip()
+            if candidate and not candidate.startswith("&") and candidate not in ignored_targets:
+                return candidate
+            return ""
+        inline_match = re.fullmatch(r"\d*(>>?)(.+)", cleaned)
+        if inline_match:
+            candidate = inline_match.group(2).strip()
+            if candidate and not candidate.startswith("&") and candidate not in ignored_targets:
+                return candidate
+    return ""
+
+
+def _extract_edit_file_target(segment: list[str]) -> str:
+    if not segment:
+        return ""
+
+    command = segment[0]
+    if command == "sed":
+        has_in_place = any(token == "-i" or token.startswith("-i") for token in segment[1:])
+        if has_in_place:
+            non_option_tokens = [token.strip() for token in segment[1:] if token.strip() and not token.startswith("-")]
+            if len(non_option_tokens) >= 2:
+                return non_option_tokens[-1]
+
+    if command == "tee":
+        for token in segment[1:]:
+            candidate = token.strip()
+            if not candidate or candidate.startswith("-"):
+                continue
+            return candidate
+
+    return _extract_redirect_target(segment)
+
+
+def _summarize_rg_search(segment: list[str]) -> str:
+    if not segment or segment[0] != "rg":
+        return ""
+
+    args = segment[1:]
+    if not args:
+        return "Searching"
+
+    pattern = ""
+    positional: list[str] = []
+    i = 0
+    while i < len(args):
+        token = args[i]
+        if token == "--":
+            positional.extend(args[i + 1 :])
+            break
+        if token in {"-e", "--regexp"}:
+            if i + 1 < len(args):
+                candidate = args[i + 1].strip()
+                if candidate:
+                    pattern = candidate
+            i += 2
+            continue
+        if token.startswith("--regexp="):
+            candidate = token.split("=", 1)[1].strip()
+            if candidate:
+                pattern = candidate
+            i += 1
+            continue
+        if token in RG_OPTIONS_WITH_VALUE:
+            i += 2
+            continue
+        if token.startswith("-") and token != "-":
+            i += 1
+            continue
+        positional.append(token)
+        i += 1
+
+    if "--files" in args:
+        target = positional[0].strip() if positional else ""
+        if target:
+            return f"Searching files in {target}"
+        return "Searching files"
+
+    if not pattern and positional:
+        pattern = positional[0].strip()
+        positional = positional[1:]
+
+    target = positional[0].strip() if positional else ""
+    if pattern and target:
+        return f"Searching {pattern} in {target}"
+    if pattern:
+        return f"Searching {pattern}"
+    if target:
+        return f"Searching in {target}"
+    return "Searching"
+
+
+def _summarize_command(command: str) -> str:
+    cleaned = _normalize_fragment(command)
+    if not cleaned:
+        return ""
+
+    segments = _command_segments(cleaned)
+    if segments:
+        for index, segment in enumerate(segments):
+            edit_target = _extract_edit_file_target(segment)
+            if edit_target:
+                return f"Editing {edit_target}"
+            rg_summary = _summarize_rg_search(segment)
+            if rg_summary:
+                return rg_summary
+            sed_file = _extract_sed_file_target(segment)
+            if sed_file:
+                return f"Reading {sed_file}"
+            if (
+                segment
+                and segment[0] == "sed"
+                and "-n" in segment
+                and index > 0
+            ):
+                nl_file = _extract_nl_file_target(segments[index - 1])
+                if nl_file:
+                    return f"Reading {nl_file}"
+    return cleaned
+
+
+def _file_change_action(kind: Any) -> str:
+    if isinstance(kind, str) and kind.strip().lower() == "add":
+        return "Add"
+    return "Modify"
+
+
+def _file_change_target_name(path_value: Any) -> str:
+    if not isinstance(path_value, str):
+        return "(unknown file)"
+    raw = path_value.strip()
+    if not raw:
+        return "(unknown file)"
+    name = Path(raw).name
+    if name:
+        return name
+    fallback = raw.rstrip("/\\")
+    if fallback:
+        return Path(fallback).name or fallback
+    return "(unknown file)"
+
+
+def _file_change_summaries(item: dict[str, Any]) -> list[str]:
+    changes = item.get("changes")
+    summaries: list[str] = []
+
+    if isinstance(changes, list):
+        for change in changes:
+            if not isinstance(change, dict):
+                continue
+            action = _file_change_action(change.get("kind"))
+            target = _file_change_target_name(change.get("path"))
+            summaries.append(f"{action} {target}")
+
+    if summaries:
+        return summaries
+
+    action = _file_change_action(item.get("kind"))
+    target = _file_change_target_name(item.get("path"))
+    return [f"{action} {target}"]
 
 
 def _strip_wrapped_bold(text: str) -> str:
@@ -519,6 +773,7 @@ def _event_items_to_blocks(event: dict[str, Any], event_type: str, timestamp: st
                 _pick_nested(item, "input", "command"),
             )
             command_value = _unwrap_shell_command(command_value)
+            command_summary = _summarize_command(command_value)
             command_state = status or "in_progress"
             if command_value or item_id:
                 label = "Command"
@@ -530,13 +785,31 @@ def _event_items_to_blocks(event: dict[str, Any], event_type: str, timestamp: st
                     SessionBlock(
                         kind="tool_call",
                         label=label,
-                        body=_truncate(_normalize_fragment(command_value) or "(command unavailable)"),
+                        body=_truncate(command_summary or "(command unavailable)"),
                         event_type=event_type,
                         timestamp=timestamp,
                         item_type=item_type,
                         role="assistant",
                         item_id=item_id,
                         item_status=command_state,
+                    )
+                )
+            continue
+
+        if item_type == "file_change":
+            file_change_state = status or "completed"
+            for summary in _file_change_summaries(item):
+                blocks.append(
+                    SessionBlock(
+                        kind="tool_call",
+                        label="File",
+                        body=_truncate(summary),
+                        event_type=event_type,
+                        timestamp=timestamp,
+                        item_type=item_type,
+                        role="assistant",
+                        item_id=item_id,
+                        item_status=file_change_state,
                     )
                 )
             continue
@@ -742,11 +1015,12 @@ def _event_to_blocks(event: dict[str, Any]) -> list[SessionBlock]:
 
         command_value = _pick_nested(event, "arguments", "command") or _pick_nested(event, "input", "command") or event.get("command")
         if isinstance(command_value, str) and command_value.strip():
+            command_value = _unwrap_shell_command(command_value)
             blocks.append(
                 SessionBlock(
                     kind="code",
                     label="Code · command",
-                    body=_truncate(_normalize_fragment(command_value)),
+                    body=_truncate(_summarize_command(command_value)),
                     event_type=event_type,
                     timestamp=timestamp,
                     item_type="code",

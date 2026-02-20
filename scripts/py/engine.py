@@ -1070,6 +1070,20 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                 capitalized.append(f"{word[:1].upper()}{word[1:]}")
             return " ".join(capitalized)
 
+        @staticmethod
+        def _render_command_body_text(body: str, body_style: str) -> Text:
+            for prefix in ("Reading ", "Editing ", "Add ", "Modify "):
+                if not body.startswith(prefix) or len(body) <= len(prefix):
+                    continue
+                target = body[len(prefix):].strip()
+                if not target:
+                    break
+                rendered = Text()
+                rendered.append(prefix, style=f"dim {body_style}")
+                rendered.append(target, style="#8a7756")
+                return rendered
+            return Text(body, style=f"dim {body_style}")
+
         def _render_structured_block(self, block: SessionBlock) -> Any:
             style = self._block_style(block)
             kind = (block.kind or "").strip().lower()
@@ -1100,8 +1114,8 @@ def _run_status_tui(args: argparse.Namespace, initial_payload: dict[str, Any]) -
                     background_color="default",
                 )
             elif kind == "tool_call":
-                if item_type in {"command_execution", "command", "shell_command"}:
-                    body_renderable = Text(body, style=f"dim {style['body']}")
+                if item_type in {"command_execution", "command", "shell_command", "file_change"}:
+                    body_renderable = self._render_command_body_text(body, style["body"])
                 else:
                     body_renderable = Syntax(
                         body,

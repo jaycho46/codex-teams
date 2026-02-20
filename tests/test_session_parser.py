@@ -123,8 +123,99 @@ class SessionParserTests(unittest.TestCase):
         command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
         self.assertEqual(len(command_blocks), 1)
         call_block = command_blocks[0]
-        self.assertEqual(call_block.body, "rg --files")
+        self.assertEqual(call_block.body, "Searching files")
         self.assertEqual(call_block.item_status, "completed")
+
+    def test_parse_jsonl_summarizes_rg_search_command_with_pattern(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.started","item":{"id":"item_rg","type":"command_execution","command":"rg -n \'parse_session_structured\' -S scripts/py","status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_rg","type":"command_execution","command":"rg -n \'parse_session_structured\' -S scripts/py","status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        self.assertEqual(command_blocks[0].body, "Searching parse_session_structured in scripts/py")
+        self.assertEqual(command_blocks[0].item_status, "completed")
+
+    def test_parse_jsonl_summarizes_direct_sed_read_command(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.started","item":{"id":"item_3","type":"command_execution","command":"sed -n \'1,120p\' README.md","status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_3","type":"command_execution","command":"sed -n \'1,120p\' README.md","status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        self.assertEqual(command_blocks[0].body, "Reading README.md")
+        self.assertEqual(command_blocks[0].item_status, "completed")
+
+    def test_parse_jsonl_summarizes_nl_pipe_sed_read_command(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.started","item":{"id":"item_4","type":"command_execution","command":"nl -ba scripts/py/session_parser.py | sed -n \'1,260p\'","status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_4","type":"command_execution","command":"nl -ba scripts/py/session_parser.py | sed -n \'1,260p\'","status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        self.assertEqual(command_blocks[0].body, "Reading scripts/py/session_parser.py")
+        self.assertEqual(command_blocks[0].item_status, "completed")
+
+    def test_parse_jsonl_summarizes_sed_in_place_as_editing(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.started","item":{"id":"item_edit_1","type":"command_execution","command":"sed -i \'s/old/new/g\' README.md","status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_edit_1","type":"command_execution","command":"sed -i \'s/old/new/g\' README.md","status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        self.assertEqual(command_blocks[0].body, "Editing README.md")
+        self.assertEqual(command_blocks[0].item_status, "completed")
+
+    def test_parse_jsonl_summarizes_redirect_write_as_editing(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.started","item":{"id":"item_edit_2","type":"command_execution","command":"printf \'hello\\n\' > notes.txt","status":"in_progress"}}',
+                '{"type":"item.completed","item":{"id":"item_edit_2","type":"command_execution","command":"printf \'hello\\n\' > notes.txt","status":"completed"}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=12)
+        self.assertEqual(parsed.source, "jsonl")
+        command_blocks = [block for block in parsed.blocks if block.kind == "tool_call"]
+        self.assertEqual(len(command_blocks), 1)
+        self.assertEqual(command_blocks[0].body, "Editing notes.txt")
+        self.assertEqual(command_blocks[0].item_status, "completed")
+
+    def test_parse_jsonl_maps_file_change_items_as_add_and_modify(self) -> None:
+        log_tail = "\n".join(
+            [
+                '{"type":"item.completed","item":{"id":"fc_1","type":"file_change","status":"completed","changes":[{"path":"/tmp/project/new_file.ts","kind":"add"},{"path":"apps/admin/src/components/ProgramBulkUpdateContent.tsx","kind":"update"}]}}',
+            ]
+        )
+
+        parsed = parse_session_structured("", log_tail=log_tail, max_blocks=8)
+        self.assertEqual(parsed.source, "jsonl")
+        file_blocks = [block for block in parsed.blocks if block.item_type == "file_change"]
+        self.assertEqual(len(file_blocks), 2)
+        self.assertTrue(all(block.kind == "tool_call" for block in file_blocks))
+        self.assertEqual(file_blocks[0].body, "Add new_file.ts")
+        self.assertEqual(file_blocks[1].body, "Modify ProgramBulkUpdateContent.tsx")
+        self.assertTrue(all(block.item_status == "completed" for block in file_blocks))
 
     def test_parse_jsonl_think_strips_surrounding_bold_markers(self) -> None:
         log_tail = "\n".join(
